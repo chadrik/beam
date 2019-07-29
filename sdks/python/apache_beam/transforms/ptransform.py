@@ -383,11 +383,13 @@ class PTransform(WithTypeHints[InT, OutT], HasDisplayData):
         input_type_hint, 'Type hints for a PTransform')
     return super(PTransform, self).with_input_types(input_type_hint)
 
-  def with_output_types(self, type_hint):
+  # Note: this signature is required for type inspection (see Liskov Substitution Principle)
+  def with_output_types(self, *output_type_hints, **unused_kwargs):
+    # type: (PTransformT, *Any, **Any) -> PTransformT
     """Annotates the output type of a :class:`PTransform` with a type-hint.
 
     Args:
-      type_hint (type): An instance of an allowed built-in type, a custom class,
+      output_type_hints (type): An instance of an allowed built-in type, a custom class,
         or a :class:`~apache_beam.typehints.typehints.TypeConstraint`.
 
     Raises:
@@ -400,9 +402,19 @@ class PTransform(WithTypeHints[InT, OutT], HasDisplayData):
       :class:`PTransform` object. This allows chaining type-hinting related
       methods.
     """
-    type_hint = native_type_compatibility.convert_to_beam_type(type_hint)
-    validate_composite_type_param(type_hint, 'Type hints for a PTransform')
-    return super(PTransform, self).with_output_types(type_hint)
+    if len(output_type_hints) != 1:
+      raise TypeCheckError(
+          'PTransform %s expects a single output type hint. Got %d)' % (
+              self.__class__, len(output_type_hints)))
+    if unused_kwargs:
+      raise TypeCheckError(
+          'PTransform %s does not take any keyword type hints. Got %s)' % (
+              self.__class__, unused_kwargs))
+    output_type_hint = native_type_compatibility.convert_to_beam_type(
+        output_type_hints[0])
+    validate_composite_type_param(output_type_hint,
+                                  'Type hints for a PTransform')
+    return super(PTransform, self).with_output_types(output_type_hint)
 
   def type_check_inputs(self, pvalueish):
     self.type_check_inputs_or_outputs(pvalueish, 'input')

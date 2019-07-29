@@ -1015,7 +1015,7 @@ class WriteImpl(ptransform.PTransform[T, T]):
     # type: (pvalue.PCollection[T]) -> pvalue.PCollection[T]
     do_once = pcoll.pipeline | 'DoOnce' >> core.Create([None])
     init_result_coll = do_once | 'InitializeWrite' >> core.Map(
-        lambda _, sink: sink.initialize_write(), self.sink)
+        lambda _, sink=self.sink: sink.initialize_write())
 
     def addkey(x):
       # type: (U) -> Tuple[Any, U]
@@ -1052,9 +1052,9 @@ class WriteImpl(ptransform.PTransform[T, T]):
     # fused.
     pre_finalize_coll = do_once | 'PreFinalize' >> core.FlatMap(
         _pre_finalize,
-        self.sink,
-        AsSingleton(init_result_coll),
-        AsIter(write_result_coll))
+        sink=self.sink,
+        init_result=AsSingleton(init_result_coll),
+        write_results=AsIter(write_result_coll))
     return do_once | 'FinalizeWrite' >> core.FlatMap(
         _finalize_write,
         self.sink,
@@ -1105,17 +1105,17 @@ class _WriteKeyedBundleDoFn(core.DoFn):
     return [window.TimestampedValue(writer.close(), timestamp.MAX_TIMESTAMP)]
 
 
-def _pre_finalize(unused_element, sink, init_result, write_results):
+# FIXME: when we migrate to python3-only, change this to:
+#  def _pre_finalize(unused_element, *, sink, init_result, write_results):
+def _pre_finalize(unused_element, sink=None, init_result=None,
+                  write_results=None):
   return sink.pre_finalize(init_result, write_results)
 
-
-def _finalize_write(
-    unused_element,
-    sink,
-    init_result,
-    write_results,
-    min_shards,
-    pre_finalize_results):
+# FIXME: when we migrate to python3-only, change this to:
+#  def _finalize_write(unused_element, *, sink, init_result, ...):
+def _finalize_write(unused_element, sink=None, init_result=None,
+                    write_results=None, min_shards=None,
+                    pre_finalize_results=None):
   write_results = list(write_results)
   extra_shards = []
   if len(write_results) < min_shards:

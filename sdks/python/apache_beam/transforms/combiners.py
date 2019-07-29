@@ -417,15 +417,12 @@ class _MergeTopPerBundle(core.DoFn[Tuple[None, Iterable[List[T]]],
       for bundle in bundles:
         if not heapc:
           heapc = [
-              cy_combiners.ComparableValue(element, self._less_than, self._key)
-              for element in bundle
-          ]
+            cy_combiners.ComparableValue(item, self._less_than, self._key)
+            for item in bundle]
           continue
-        for element in reversed(bundle):
-          if push(heapc,
-                  cy_combiners.ComparableValue(element,
-                                               self._less_than,
-                                               self._key)):
+        for item in reversed(bundle):
+          if push(heapc, cy_combiners.ComparableValue(
+              item, self._less_than, self._key)):
             break
       heapc.sort()
       yield [wrapper.value for wrapper in reversed(heapc)]
@@ -436,8 +433,8 @@ class _MergeTopPerBundle(core.DoFn[Tuple[None, Iterable[List[T]]],
         if not heap:
           heap = bundle
           continue
-        for element in reversed(bundle):
-          if push(heap, element):
+        for item in reversed(bundle):
+          if push(heap, item):
             break
       heap.sort()
       yield heap[::-1]
