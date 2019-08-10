@@ -46,6 +46,9 @@ from typing import Any
 from typing import Iterator
 from typing import Optional
 from typing import Tuple
+from typing import Union
+from typing import TypeVar
+from typing import Union
 
 from apache_beam import coders
 from apache_beam import pvalue
@@ -77,6 +80,8 @@ __all__ = [
 ]
 
 _LOGGER = logging.getLogger(__name__)
+
+U = TypeVar('U')
 
 # Encapsulates information about a bundle of a source generated when method
 # BoundedSource.split() is invoked.
@@ -1002,10 +1007,16 @@ class WriteImpl(ptransform.PTransform):
     do_once = pcoll.pipeline | 'DoOnce' >> core.Create([None])
     init_result_coll = do_once | 'InitializeWrite' >> core.Map(
         lambda _, sink: sink.initialize_write(), self.sink)
-    if getattr(self.sink, 'num_shards', 0):
-      min_shards = self.sink.num_shards
+
+    def addkey(x):
+      # type: (U) -> Tuple[Any, U]
+      return (None, x)
+
+    num_shards = getattr(self.sink, 'num_shards', 0)
+    if num_shards:
+      min_shards = num_shards
       if min_shards == 1:
-        keyed_pcoll = pcoll | core.Map(lambda x: (None, x))
+        keyed_pcoll = pcoll | core.Map(addkey)
       else:
         keyed_pcoll = pcoll | core.ParDo(_RoundRobinKeyFn(min_shards))
       write_result_coll = (
@@ -1015,6 +1026,10 @@ class WriteImpl(ptransform.PTransform):
           | 'WriteBundles' >> core.ParDo(
               _WriteKeyedBundleDoFn(self.sink), AsSingleton(init_result_coll)))
     else:
+      def getvalue(x):
+        # type: (Tuple[Any, Iterable[U]]) -> Iterable[U]
+        return x[1]
+
       min_shards = 1
       write_result_coll = (
           pcoll
