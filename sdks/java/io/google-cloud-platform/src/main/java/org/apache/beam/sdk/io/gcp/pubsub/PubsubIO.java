@@ -23,8 +23,8 @@ import com.google.api.client.util.Clock;
 import com.google.auto.service.AutoService;
 import com.google.auto.value.AutoValue;
 import com.google.protobuf.ByteString;
-import com.google.protobuf.Message;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Message;
 import java.io.IOException;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
@@ -1290,9 +1290,11 @@ public class PubsubIO {
     }
   }
 
-  private static class ParsePayloadAsPubsubMessageProto extends SimpleFunction<PubsubMessage, byte[]> {
+  private static class ParsePayloadAsPubsubMessageProto
+      extends SimpleFunction<PubsubMessage, byte[]> {
     @Override
     public byte[] apply(PubsubMessage input) {
+      System.out.println(String.format("-----ParsePayloadAsPubsubMessageProto.apply: %s", input));
       com.google.pubsub.v1.PubsubMessage.Builder message =
           com.google.pubsub.v1.PubsubMessage.newBuilder()
               .setData(ByteString.copyFrom(input.getPayload()))
@@ -1325,7 +1327,8 @@ public class PubsubIO {
     }
   }
 
-  private static class FormatPayloadFromPubsubMessageProto extends SimpleFunction<byte[], PubsubMessage> {
+  private static class FormatPayloadFromPubsubMessageProto
+      extends SimpleFunction<byte[], PubsubMessage> {
     @Override
     public PubsubMessage apply(byte[] input) {
       try {
