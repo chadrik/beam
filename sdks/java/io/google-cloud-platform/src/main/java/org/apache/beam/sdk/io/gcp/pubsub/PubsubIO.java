@@ -1295,11 +1295,11 @@ public class PubsubIO {
     @Override
     public byte[] apply(PubsubMessage input) {
       System.out.println(String.format("-----ParsePayloadAsPubsubMessageProto.apply: %s", input));
-      com.google.pubsub.v1.PubsubMessage.Builder message =
-          com.google.pubsub.v1.PubsubMessage.newBuilder()
+      return com.google.pubsub.v1.PubsubMessage.newBuilder()
               .setData(ByteString.copyFrom(input.getPayload()))
-              .putAllAttributes(input.getAttributeMap());
-      return message.build().toByteArray();
+//              .putAllAttributes(input.getAttributeMap())
+              .build()
+              .toByteArray();
     }
   }
 

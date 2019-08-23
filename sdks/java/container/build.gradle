@@ -45,6 +45,8 @@ dependencies {
   dockerDependency project(":sdks:java:io:kafka")
   // This dependency is set to 'provided' scope in :sdks:java:io:kafka
   dockerDependency library.java.kafka_clients
+  // For executing PubSubIO, e.g. as an external transform
+  dockerDependency project(":sdks:java:io:google-cloud-platform")
 }
 
 def dockerfileName = project.findProperty('dockerfile') ?: 'Dockerfile'
@@ -56,6 +58,7 @@ task copyDockerfileDependencies(type: Copy) {
   rename 'beam-sdks-java-harness-.*.jar', 'beam-sdks-java-harness.jar'
   rename 'beam-sdks-java-io-kafka.*.jar', 'beam-sdks-java-io-kafka.jar'
   rename 'kafka-clients.*.jar', 'kafka-clients.jar'
+  rename 'beam-sdks-java-io-google-cloud-platform.*.jar', 'beam-sdks-java-io-google-cloud-platform.jar'
   into "build/target"
 }
 

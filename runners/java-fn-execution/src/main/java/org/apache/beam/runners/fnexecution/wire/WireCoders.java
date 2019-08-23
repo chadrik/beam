@@ -95,8 +95,9 @@ public class WireCoders {
         SyntheticComponents.uniqueId(
             String.format("fn/wire/%s", pCollectionNode.getId()), components::containsCoders);
     components.putCoders(windowedValueId, windowedValueCoder);
-    return LengthPrefixUnknownCoders.addLengthPrefixedCoder(
-        windowedValueId, components, useByteArrayCoder);
+    return windowedValueId;
+    // return LengthPrefixUnknownCoders.addLengthPrefixedCoder(
+    //    windowedValueId, components, useByteArrayCoder);
   }
 
   // Not instantiable.
