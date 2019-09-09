@@ -28,9 +28,12 @@ from builtins import object
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Dict
+from typing import Generic
 from typing import Mapping
 from typing import Optional
+from typing import TypeVar
 from typing import Union
+from typing_extensions import Protocol
 
 from apache_beam import coders
 from apache_beam import pipeline
@@ -47,24 +50,28 @@ if TYPE_CHECKING:
   from apache_beam.coders.coder_impl import IterableStateReader
   from apache_beam.coders.coder_impl import IterableStateWriter
 
+class PortableObject(Protocol):
+  def to_runner_api(self, __context):
+    # type: (PipelineContext) -> Any
+    pass
 
-class _PipelineContextMap(object):
+class _PipelineContextMap(Generic[PortableObjectT]):
   """This is a bi-directional map between objects and ids.
 
   Under the hood it encodes and decodes these objects into runner API
   representations.
   """
   def __init__(self,
-               context,
-               obj_type,
+               context,  # type: PipelineContext
+               obj_type,  # type: Type[PortableObjectT]
                namespace,  # type: str
                proto_map=None  # type: Optional[Mapping[str, message.Message]]
               ):
     self._pipeline_context = context
     self._obj_type = obj_type
     self._namespace = namespace
-    self._obj_to_id = {}  # type: Dict[Any, str]
-    self._id_to_obj = {}  # type: Dict[str, Any]
+    self._obj_to_id = {}  # type: Dict[PortableObjectT, str]
+    self._id_to_obj = {}  # type: Dict[str, PortableObjectT]
     self._id_to_proto = dict(proto_map) if proto_map else {}
     self._counter = 0
 
@@ -83,7 +90,7 @@ class _PipelineContextMap(object):
       proto_map[id].CopyFrom(proto)
 
   def get_id(self, obj, label=None):
-    # type: (Any, Optional[str]) -> str
+    # type: (PortableObjectT, Optional[str]) -> str
     if obj not in self._obj_to_id:
       id = self._unique_ref(obj, label)
       self._id_to_obj[id] = obj
@@ -92,11 +99,11 @@ class _PipelineContextMap(object):
     return self._obj_to_id[obj]
 
   def get_proto(self, obj, label=None):
-    # type: (Any, Optional[str]) -> message.Message
+    # type: (PortableObjectT, Optional[str]) -> message.Message
     return self._id_to_proto[self.get_id(obj, label)]
 
   def get_by_id(self, id):
-    # type: (str) -> Any
+    # type: (str) -> PortableObjectT
     if id not in self._id_to_obj:
       self._id_to_obj[id] = self._obj_type.from_runner_api(
           self._id_to_proto[id], self._pipeline_context)
@@ -122,7 +129,7 @@ class _PipelineContextMap(object):
     return id
 
   def __getitem__(self, id):
-    # type: (str) -> Any
+    # type: (str) -> PortableObjectT
     return self.get_by_id(id)
 
   def __contains__(self, id):
@@ -142,6 +149,8 @@ class PipelineContext(object):
                use_fake_coders=False,
                iterable_state_read=None,  # type: Optional[IterableStateReader]
                iterable_state_write=None,  # type: Optional[IterableStateWriter]
+               iterable_state_read=None,
+               iterable_state_write=None,
                namespace='ref',
                allow_proto_holders=False
               ):

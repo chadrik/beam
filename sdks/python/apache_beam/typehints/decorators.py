@@ -98,6 +98,7 @@ from builtins import zip
 from typing import Any
 from typing import Callable
 from typing import Dict
+from typing import Generic
 from typing import List
 from typing import NamedTuple
 from typing import Optional
@@ -126,6 +127,9 @@ __all__ = [
 
 T = TypeVar('T')
 WithTypeHintsT = TypeVar('WithTypeHintsT', bound='WithTypeHints')  # pylint: disable=invalid-name
+InT = TypeVar('InT')
+OutT = TypeVar('OutT')
+WithTypeHintsT = TypeVar('WithTypeHintsT', bound='WithTypeHints')
 
 # This is missing in the builtin types module.  str.upper is arbitrary, any
 # method on a C-implemented type will do.
@@ -434,7 +438,7 @@ class IOTypeHints(NamedTuple(
     return (IOTypeHints, (self.input_types, self.output_types, []))
 
 
-class WithTypeHints(object):
+class WithTypeHints(Generic[InT, OutT]):
   """A mixin class that provides the ability to set and retrieve type hints.
   """
   def __init__(self, *unused_args, **unused_kwargs):

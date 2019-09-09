@@ -34,8 +34,12 @@ from __future__ import absolute_import
 from builtins import object
 from typing import TYPE_CHECKING
 from typing import Any
+from typing import Generic
 from typing import Optional
+from typing import Sequence
 from typing import Tuple
+from typing import TypeVar
+from typing import Union
 
 from apache_beam.utils.timestamp import MAX_TIMESTAMP
 from apache_beam.utils.timestamp import MIN_TIMESTAMP
@@ -44,6 +48,8 @@ from apache_beam.utils.timestamp import TimestampTypes  # pylint: disable=unused
 
 if TYPE_CHECKING:
   from apache_beam.transforms.window import BoundedWindow
+
+T = TypeVar('T')
 
 
 class PaneInfoTiming(object):
@@ -190,7 +196,7 @@ _BYTE_TO_PANE_INFO = _construct_well_known_pane_infos()
 PANE_INFO_UNKNOWN = _BYTE_TO_PANE_INFO[0xF]
 
 
-class WindowedValue(object):
+class WindowedValue(Generic[T]):
   """A windowed value having a value, a timestamp and set of windows.
 
   Attributes:
@@ -204,7 +210,7 @@ class WindowedValue(object):
   """
 
   def __init__(self,
-               value,
+               value,  # type: T
                timestamp,  # type: TimestampTypes
                windows,  # type: Tuple[BoundedWindow, ...]
                pane_info=PANE_INFO_UNKNOWN
