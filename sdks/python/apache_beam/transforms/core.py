@@ -30,6 +30,7 @@ import typing
 from builtins import map
 from builtins import object
 from builtins import range
+from typing_extensions import Protocol
 
 from past.builtins import unicode
 
@@ -113,13 +114,16 @@ __all__ = [
 
 # Type variables
 T = typing.TypeVar('T')
-K = typing.TypeVar('K')
-V = typing.TypeVar('V')
 T1 = typing.TypeVar('T1')
 T2 = typing.TypeVar('T2')
 T3 = typing.TypeVar('T3')
+K = typing.TypeVar('K')
+V = typing.TypeVar('V')
 T_contra = typing.TypeVar('T_contra', contravariant=True)
 T_co = typing.TypeVar('T_co', covariant=True)
+T1_contra = typing.TypeVar('T1_contra', contravariant=True)
+T2_contra = typing.TypeVar('T2_contra', contravariant=True)
+T3_contra = typing.TypeVar('T3_contra', contravariant=True)
 AccumulatorT = typing.TypeVar('AccumulatorT')
 
 _LOGGER = logging.getLogger(__name__)
@@ -554,6 +558,12 @@ class _WatermarkEstimatorParam(_DoFnParam):
     self.param_id = 'WatermarkEstimator'
 
 
+class DoFnCallable(Protocol[T_contra, T_co]):
+  def __call__(self, __element):
+    # type: (T_contra) -> Iterable[T_co]
+    pass
+
+
 class DoFn(WithTypeHints[InT, OutT], HasDisplayData, urns.RunnerApiFn):
   """A function object used by a transform with custom processing.
 
@@ -600,6 +610,7 @@ class DoFn(WithTypeHints[InT, OutT], HasDisplayData, urns.RunnerApiFn):
 
   @staticmethod
   def from_callable(fn):
+    # type: (DoFnCallable[InT, OutT]) -> CallableWrapperDoFn[InT, OutT]
     return CallableWrapperDoFn(fn)
 
   def default_label(self):
@@ -745,6 +756,7 @@ class CallableWrapperDoFn(DoFn[InT, OutT]):
   them in transforms.
   """
   def __init__(self, fn, fullargspec=None):
+    # type: (DoFnCallable[InT, OutT], Optional[Any]) -> None
     """Initializes a CallableWrapperDoFn object wrapping a callable.
 
     Args:
@@ -994,6 +1006,12 @@ class _ReiterableChain(object):
     return False
 
 
+class CombineFnCallable(Protocol[T]):
+  def __call__(self, __element, *args, **kwargs):
+    # type: (Iterable[T], *Any, **Any) -> T
+    pass
+
+
 class CallableWrapperCombineFn(CombineFn[T, T, List[T]]):
   """For internal use only; no backwards-compatibility guarantees.
 
@@ -1005,6 +1023,7 @@ class CallableWrapperCombineFn(CombineFn[T, T, List[T]]):
   _DEFAULT_BUFFER_SIZE = 10
 
   def __init__(self, fn, buffer_size=_DEFAULT_BUFFER_SIZE):
+    # type: (CombineFnCallable[T], int) -> None
     """Initializes a CallableFn object wrapping a callable.
 
     Args:
@@ -1161,6 +1180,12 @@ class PartitionFn(WithTypeHints[T, T], Generic[T]):
     pass
 
 
+class PartitionCallable(Protocol[T_contra]):
+  def __call__(self, __element, __num_partions, *args, **kwargs):
+    # type: (T_contra, int, *Any, **Any) -> int
+    pass
+
+
 class CallableWrapperPartitionFn(PartitionFn[T]):
   """For internal use only; no backwards-compatibility guarantees.
 
@@ -1169,6 +1194,7 @@ class CallableWrapperPartitionFn(PartitionFn[T]):
   Instances of this class wrap simple functions for use in Partition operations.
   """
   def __init__(self, fn):
+    # type: (PartitionCallable[T]) -> None
     """Initializes a PartitionFn object wrapping a callable.
 
     Args:
@@ -1241,6 +1267,7 @@ class ParDo(PTransformWithSideInputs[InT, OutT]):
     return trivial_inference.element_type(self.fn.infer_output_type(input_type))
 
   def make_fn(self, fn, has_side_inputs):
+    # type: (Union[DoFn[InT, OutT], DoFnCallable[InT, OutT]], bool) -> DoFn[InT, OutT]
     if isinstance(fn, DoFn):
       return fn
     return CallableWrapperDoFn(fn)
@@ -1411,9 +1438,33 @@ class _MultiParDo(PTransform):
         pcoll.pipeline, self._do_transform, self._tags, self._main_tag)
 
 
-def FlatMap(fn,  # type: Callable[[...], Iterable[OutT]]
+class FlatMapCallable(Protocol[T_contra, T_co]):
+  def __call__(self, __element):
+    # type: (T_contra) -> Iterable[T_co]
+    pass
+
+
+class FlatMapCallableWithArgs(Protocol[T_contra, T_co]):
+  def __call__(self, __element, **kwargs):
+    # type: (T_contra, **Any) -> Iterable[T_co]
+    pass
+
+
+@typing.overload
+def FlatMap(fn,  # type: FlatMapCallable[InT, OutT]
+            ):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[InT, OutT]
+  pass
+
+
+@typing.overload
+def FlatMap(fn,  # type: FlatMapCallableWithArgs[InT, OutT]
             *args, **kwargs):  # pylint: disable=invalid-name
-  # type: (...) -> ParDo[Any, OutT]
+  # type: (...) -> ParDo[InT, OutT]
+  pass
+
+
+def FlatMap(fn, *args, **kwargs):  # pylint: disable=invalid-name
   """:func:`FlatMap` is like :class:`ParDo` except it takes a callable to
   specify the transformation.
 
@@ -1447,7 +1498,34 @@ def FlatMap(fn,  # type: Callable[[...], Iterable[OutT]]
   return pardo
 
 
-def Map(fn, *args, **kwargs):  # pylint: disable=invalid-name
+class MapCallable(Protocol[T_contra, T_co]):
+  def __call__(self, __element):
+    # type: (T_contra) -> T_co
+    pass
+
+
+class MapCallableWithArgs(Protocol[T_contra, T_co]):
+  def __call__(self, __element, *args, **kwargs):
+    # type: (T_contra, *Any, **Any) -> T_co
+    pass
+
+
+@typing.overload
+def Map(fn,  # type: MapCallable[InT, OutT]
+       ):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[InT, OutT]
+  pass
+
+
+@typing.overload
+def Map(fn,  # type: MapCallableWithArgs[InT, OutT]
+        *args, **kwargs):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[InT, OutT]
+  pass
+
+
+def Map(fn,
+        *args, **kwargs):  # pylint: disable=invalid-name
   """:func:`Map` is like :func:`FlatMap` except its callable returns only a
   single element.
 
@@ -1470,10 +1548,15 @@ def Map(fn, *args, **kwargs):  # pylint: disable=invalid-name
     raise TypeError(
         'Map can be used only with callable objects. '
         'Received %r instead.' % (fn))
+
   if _fn_takes_side_inputs(fn):
-    wrapper = lambda x, *args, **kwargs: [fn(x, *args, **kwargs)]
+    def wrapper(x, *args, **kwargs):
+      # type: (InT, *Any, **Any) -> List[OutT]
+      return [fn(x, *args, **kwargs)]
   else:
-    wrapper = lambda x: [fn(x)]
+    def wrapper(x):
+      # type: (InT) -> List[OutT]
+      return [fn(x)]
 
   label = 'Map(%s)' % ptransform.label_from_callable(fn)
 
@@ -1499,6 +1582,79 @@ def Map(fn, *args, **kwargs):  # pylint: disable=invalid-name
   pardo = FlatMap(wrapper, *args, **kwargs)
   pardo.label = label
   return pardo
+
+
+class MapTuple2Callable(Protocol[T1_contra, T2_contra, T_co]):
+  def __call__(self, __element1, __element2):
+    # type: (T1_contra, T2_contra) -> T_co
+    pass
+
+
+class MapTuple3Callable(Protocol[T1_contra, T2_contra, T3_contra, T_co]):
+  def __call__(self, __element1, __element2, __element3):
+    # type: (T1_contra, T2_contra, T3_contra) -> T_co
+    pass
+
+
+
+class MapTupleCallableWithArgs(Protocol[T1_contra, T_co]):
+  def __call__(self, __element1, **kwargs):
+    # type: (T1_contra, **Any) -> T_co
+    pass
+
+
+class MapTuple2CallableWithArgs(Protocol[T1_contra, T2_contra, T_co]):
+  def __call__(self, __element1, __element2, **kwargs):
+    # type: (T1_contra, T2_contra, **Any) -> T_co
+    pass
+
+
+class MapTuple3CallableWithArgs(Protocol[T1_contra, T2_contra, T3_contra, T_co]):
+  def __call__(self, __element1, __element2, __element3, **kwargs):
+    # type: (T1_contra, T2_contra, T3_contra, **Any) -> T_co
+    pass
+
+
+@typing.overload
+def MapTuple(fn,  # type: MapCallable[T1, OutT]
+             ):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[Tuple[T1], OutT]
+  pass
+
+
+@typing.overload
+def MapTuple(fn,  # type: MapTuple2Callable[T1, T2, OutT]
+             ):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[Tuple[T1, T2], OutT]
+  pass
+
+
+@typing.overload
+def MapTuple(fn,  # type: MapTuple3Callable[T1, T2, T3, OutT]
+             ):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[Tuple[T1, T2, T3], OutT]
+  pass
+
+
+@typing.overload
+def MapTuple(fn,  # type: MapTupleCallableWithArgs[T1, OutT]
+             **kwargs):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[Tuple[T1], OutT]
+  pass
+
+
+@typing.overload
+def MapTuple(fn,  # type: MapTuple2CallableWithArgs[T1, T2, OutT]
+             **kwargs):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[Tuple[T1, T2], OutT]
+  pass
+
+
+@typing.overload
+def MapTuple(fn,  # type: MapTuple3CallableWithArgs[T1, T2, T3, OutT]
+             **kwargs):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[Tuple[T1, T2, T3], OutT]
+  pass
 
 
 def MapTuple(fn, *args, **kwargs):  # pylint: disable=invalid-name
@@ -1649,6 +1805,33 @@ def FlatMapTuple(fn, *args, **kwargs):  # pylint: disable=invalid-name
       **kwargs)
   pardo.label = label
   return pardo
+
+
+
+class FilterCallable(Protocol[T_co]):
+  def __call__(self, __element):
+    # type: (T) -> bool
+    pass
+
+
+class FilterCallableWithArgs(Protocol[T_co]):
+  def __call__(self, __element, *args, **kwargs):
+    # type: (T, *Any, **Any) -> bool
+    pass
+
+
+@typing.overload
+def Filter(fn,  # type: FilterCallable[T]
+           ):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[T, T]
+  pass
+
+
+@typing.overload
+def Filter(fn,  # type: FilterCallableWithArgs[T]
+           *args, **kwargs):  # pylint: disable=invalid-name
+  # type: (...) -> ParDo[T, T]
+  pass
 
 
 def Filter(fn, *args, **kwargs):  # pylint: disable=invalid-name
@@ -2330,6 +2513,7 @@ class Partition(PTransformWithSideInputs[T, T]):
       yield pvalue.TaggedOutput(str(partition), element)
 
   def make_fn(self, fn, has_side_inputs):
+    # type: (Union[PartitionFn[T], PartitionCallable[T]], bool) -> PartitionFn[T]
     return fn if isinstance(fn, PartitionFn) else CallableWrapperPartitionFn(fn)
 
   def expand(self, pcoll):
