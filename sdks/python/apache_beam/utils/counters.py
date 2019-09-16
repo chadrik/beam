@@ -30,9 +30,10 @@ from __future__ import absolute_import
 import threading
 from builtins import hex
 from builtins import object
-from collections import namedtuple
 from typing import TYPE_CHECKING
 from typing import Dict
+from typing import NamedTuple
+from typing import Optional
 
 from apache_beam.transforms import cy_combiners
 
@@ -47,8 +48,12 @@ if TYPE_CHECKING:
 # It may represent the consumption of Shuffle IO, or the consumption of
 # side inputs. The way in which each is represented is explained in the
 # documentation of the side_input_id, and shuffle_id functions.
-IOTargetName = namedtuple(
-    'IOTargetName', ['requesting_step_name', 'input_index'])
+IOTargetName = NamedTuple(
+    'IOTargetName',
+    [
+        ('requesting_step_name', str),
+        ('input_index', Optional[int]),
+    ])
 
 
 def side_input_id(step_name, input_index):
@@ -87,17 +92,17 @@ def shuffle_id(step_name):
   return IOTargetName(step_name, None)
 
 
-_CounterName = namedtuple(
+_CounterName = NamedTuple(
     '_CounterName',
     [
-        'name',
-        'stage_name',
-        'step_name',
-        'system_name',
-        'namespace',
-        'origin',
-        'output_index',
-        'io_target'
+        ('name', str),
+        ('stage_name', Optional[str]),
+        ('step_name', Optional[str]),
+        ('system_name', Optional[str]),
+        ('namespace', Optional[str]),
+        ('origin', object),
+        ('output_index', Optional[str]),
+        ('io_target', Optional[str]),
     ])
 
 
