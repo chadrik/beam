@@ -55,6 +55,7 @@ if TYPE_CHECKING:
   from apache_beam.transforms import sideinputs
   from apache_beam.transforms.core import ParDo
   from apache_beam.transforms.core import Windowing
+  from apache_beam.transforms.ptransform import PTransform
   from apache_beam.pipeline import AppliedPTransform
   from apache_beam.pipeline import Pipeline
   from apache_beam.runners.pipeline_context import PipelineContext
