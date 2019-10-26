@@ -150,48 +150,20 @@ class Stager(object):
 
     # Stage a requirements file if present.
     if setup_options.requirements_file is not None:
-      if not os.path.isfile(setup_options.requirements_file):
-        raise RuntimeError(
-            'The file %s cannot be found. It was specified in the '
-            '--requirements_file command line option.' %
-            setup_options.requirements_file)
-      staged_path = FileSystems.join(staging_location, REQUIREMENTS_FILE)
-      self.stage_artifact(setup_options.requirements_file, staged_path)
-      resources.append(REQUIREMENTS_FILE)
-      requirements_cache_path = (
-          os.path.join(tempfile.gettempdir(), 'dataflow-requirements-cache')
-          if setup_options.requirements_cache is None else
-          setup_options.requirements_cache)
-      # Populate cache with packages from requirements and stage the files
-      # in the cache.
-      if not os.path.exists(requirements_cache_path):
-        os.makedirs(requirements_cache_path)
-      (populate_requirements_cache if populate_requirements_cache else
-       Stager._populate_requirements_cache)(setup_options.requirements_file,
-                                            requirements_cache_path)
-      for pkg in glob.glob(os.path.join(requirements_cache_path, '*')):
-        self.stage_artifact(
-            pkg, FileSystems.join(staging_location, os.path.basename(pkg)))
-        resources.append(os.path.basename(pkg))
+      resources.extend(
+          self._stage_requirements_file(
+              setup_options.requirements_file, staging_location,
+              setup_options.requirements_cache, populate_requirements_cache))
 
     # Handle a setup file if present.
     # We will build the setup package locally and then copy it to the staging
     # location because the staging location is a remote path and the file cannot
     # be created directly there.
     if setup_options.setup_file is not None:
-      if not os.path.isfile(setup_options.setup_file):
-        raise RuntimeError(
-            'The file %s cannot be found. It was specified in the '
-            '--setup_file command line option.' % setup_options.setup_file)
-      if os.path.basename(setup_options.setup_file) != 'setup.py':
-        raise RuntimeError(
-            'The --setup_file option expects the full path to a file named '
-            'setup.py instead of %s' % setup_options.setup_file)
-      tarball_file = Stager._build_setup_package(setup_options.setup_file,
-                                                 temp_dir, build_setup_args)
-      staged_path = FileSystems.join(staging_location, WORKFLOW_TARBALL_FILE)
-      self.stage_artifact(tarball_file, staged_path)
-      resources.append(WORKFLOW_TARBALL_FILE)
+      resources.extend(
+          self._stage_setup_file(
+              setup_options.setup_file, staging_location, build_setup_args,
+              temp_dir=temp_dir))
 
     # Handle extra local packages that should be staged.
     if setup_options.extra_packages is not None:
@@ -214,13 +186,8 @@ class Stager(object):
     # staging location because the staging location is a remote path and the
     # file cannot be created directly there.
     if setup_options.save_main_session:
-      pickled_session_file = os.path.join(temp_dir,
-                                          names.PICKLED_MAIN_SESSION_FILE)
-      pickler.dump_session(pickled_session_file)
-      staged_path = FileSystems.join(staging_location,
-                                     names.PICKLED_MAIN_SESSION_FILE)
-      self.stage_artifact(pickled_session_file, staged_path)
-      resources.append(names.PICKLED_MAIN_SESSION_FILE)
+      resources.extend(
+          self._stage_main_session(staging_location, temp_dir=temp_dir))
 
     if hasattr(setup_options, 'sdk_location'):
 
@@ -247,33 +214,9 @@ class Stager(object):
       else:
         # This branch is also used by internal tests running with the SDK built
         # at head.
-        if os.path.isdir(setup_options.sdk_location):
-          # TODO(angoenka): remove reference to Dataflow
-          sdk_path = os.path.join(setup_options.sdk_location,
-                                  DATAFLOW_SDK_TARBALL_FILE)
-        else:
-          sdk_path = setup_options.sdk_location
-
-        if os.path.isfile(sdk_path):
-          _LOGGER.info('Copying Beam SDK "%s" to staging location.', sdk_path)
-          staged_path = FileSystems.join(
-              staging_location,
-              Stager._desired_sdk_filename_in_staging_location(
-                  setup_options.sdk_location))
-          self.stage_artifact(sdk_path, staged_path)
-          _, sdk_staged_filename = FileSystems.split(staged_path)
-          resources.append(sdk_staged_filename)
-        else:
-          if setup_options.sdk_location == 'default':
-            raise RuntimeError('Cannot find default Beam SDK tar file "%s"'
-                               % sdk_path)
-          elif not setup_options.sdk_location:
-            _LOGGER.info('Beam SDK will not be staged since --sdk_location '
-                         'is empty.')
-          else:
-            raise RuntimeError(
-                'The file "%s" cannot be found. Its location was specified by '
-                'the --sdk_location command-line option.' % sdk_path)
+        resources.extend(
+            self._stage_local_beam_sdk(
+                setup_options.sdk_location, staging_location))
 
     worker_options = options.view_as(WorkerOptions)
     dataflow_worker_jar = getattr(worker_options, 'dataflow_worker_jar', None)
@@ -320,6 +263,49 @@ class Stager(object):
   @staticmethod
   def _is_remote_path(path):
     return path.find('://') != -1
+
+  def _stage_requirements_file(self, requirements_file, staging_location,
+                               requirements_cache, populate_requirements_cache):
+    if not os.path.isfile(requirements_file):
+      raise RuntimeError(
+          'The file %s cannot be found. It was specified in the '
+          '--requirements_file command line option.' %
+          requirements_file)
+    staged_path = FileSystems.join(staging_location, REQUIREMENTS_FILE)
+    resources = []
+    self.stage_artifact(requirements_file, staged_path)
+    resources.append(REQUIREMENTS_FILE)
+    requirements_cache_path = (
+        os.path.join(tempfile.gettempdir(), 'dataflow-requirements-cache')
+        if requirements_cache is None else requirements_cache)
+    # Populate cache with packages from requirements and stage the files
+    # in the cache.
+    if not os.path.exists(requirements_cache_path):
+      os.makedirs(requirements_cache_path)
+    (populate_requirements_cache if populate_requirements_cache else
+     Stager._populate_requirements_cache)(requirements_file,
+                                          requirements_cache_path)
+    for pkg in glob.glob(os.path.join(requirements_cache_path, '*')):
+      self.stage_artifact(
+          pkg, FileSystems.join(staging_location, os.path.basename(pkg)))
+      resources.append(os.path.basename(pkg))
+    return resources
+
+  def _stage_setup_file(self, setup_file, staging_location, build_setup_args,
+                        temp_dir):
+    if not os.path.isfile(setup_file):
+      raise RuntimeError(
+          'The file %s cannot be found. It was specified in the '
+          '--setup_file command line option.' % setup_file)
+    if os.path.basename(setup_file) != 'setup.py':
+      raise RuntimeError(
+          'The --setup_file option expects the full path to a file named '
+          'setup.py instead of %s' % setup_file)
+    tarball_file = Stager._build_setup_package(setup_file,
+                                               temp_dir, build_setup_args)
+    staged_path = FileSystems.join(staging_location, WORKFLOW_TARBALL_FILE)
+    self.stage_artifact(tarball_file, staged_path)
+    return [WORKFLOW_TARBALL_FILE]
 
   def _stage_jar_packages(self, jar_packages, staging_location, temp_dir):
     """Stages a list of local jar packages for Java SDK Harness.
@@ -452,6 +438,15 @@ class Stager(object):
     resources.append(EXTRA_PACKAGES_FILE)
 
     return resources
+
+  def _stage_main_session(self, staging_location, temp_dir):
+    pickled_session_file = os.path.join(temp_dir,
+                                        names.PICKLED_MAIN_SESSION_FILE)
+    pickler.dump_session(pickled_session_file)
+    staged_path = FileSystems.join(staging_location,
+                                   names.PICKLED_MAIN_SESSION_FILE)
+    self.stage_artifact(pickled_session_file, staged_path)
+    return [names.PICKLED_MAIN_SESSION_FILE]
 
   @staticmethod
   def _get_python_executable():
@@ -586,6 +581,37 @@ class Stager(object):
       raise RuntimeError(
           'The --sdk_location option was used with an unsupported '
           'type of location: %s' % sdk_remote_location)
+
+  def _stage_local_beam_sdk(self, sdk_location, staging_location):
+    resources = []
+    if os.path.isdir(sdk_location):
+      # TODO(angoenka): remove reference to Dataflow
+      sdk_path = os.path.join(sdk_location,
+                              DATAFLOW_SDK_TARBALL_FILE)
+    else:
+      sdk_path = sdk_location
+
+    if os.path.isfile(sdk_path):
+      _LOGGING.info('Copying Beam SDK "%s" to staging location.', sdk_path)
+      staged_path = FileSystems.join(
+          staging_location,
+          Stager._desired_sdk_filename_in_staging_location(
+              sdk_location))
+      self.stage_artifact(sdk_path, staged_path)
+      _, sdk_staged_filename = FileSystems.split(staged_path)
+      resources.append(sdk_staged_filename)
+    else:
+      if sdk_location == 'default':
+        raise RuntimeError('Cannot find default Beam SDK tar file "%s"'
+                           % sdk_path)
+      elif not sdk_location:
+        _LOGGING.info('Beam SDK will not be staged since --sdk_location '
+                     'is empty.')
+      else:
+        raise RuntimeError(
+            'The file "%s" cannot be found. Its location was specified by '
+            'the --sdk_location command-line option.' % sdk_path)
+    return resources
 
   @staticmethod
   def _download_pypi_sdk_package(temp_dir,
