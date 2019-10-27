@@ -65,6 +65,8 @@ class LocalJobServicer(abstract_job_service.AbstractJobServiceServicer):
     subprocesses for the runner and worker(s).
     """
 
+  job_class = None
+
   def __init__(self, staging_dir=None):
     super(LocalJobServicer, self).__init__()
     self._cleanup_staging_dir = staging_dir is None
@@ -72,6 +74,8 @@ class LocalJobServicer(abstract_job_service.AbstractJobServiceServicer):
     self._artifact_service = artifact_service.BeamFilesystemArtifactService(
         self._staging_dir)
     self._artifact_staging_endpoint = None
+    if self.job_class is None:
+      self.job_class = BeamJob
 
   def create_beam_job(self, preparation_id, job_name, pipeline, options):
     # TODO(angoenka): Pass an appropriate staging_session_token. The token can
@@ -91,7 +95,7 @@ class LocalJobServicer(abstract_job_service.AbstractJobServiceServicer):
             retrieval_token=self._artifact_service.retrieval_token(
                 preparation_id)),
         self._staging_dir)
-    return BeamJob(
+    return self.job_class(
         preparation_id,
         pipeline,
         options,
