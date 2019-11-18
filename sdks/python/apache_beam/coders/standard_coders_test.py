@@ -85,7 +85,7 @@ def value_parser_from_schema(schema):
   parsers = [(field.name, attribute_parser_from_type(field.type))
              for field in schema.fields]
 
-  constructor = schemas.named_tuple_from_schema(schema)
+  constructor = schemas.type_from_schema(schema)
 
   def value_parser(x):
     result = []

@@ -38,6 +38,127 @@ from apache_beam.typehints.schemas import typing_to_runner_api
 IS_PYTHON_3 = sys.version_info.major > 2
 
 
+def primitive_types():
+  all_nonoptional_primitives = [
+      np.int8,
+      np.int16,
+      np.int32,
+      np.int64,
+      np.float32,
+      np.float64,
+      unicode,
+      bool,
+  ]
+
+  # The bytes type cannot survive a roundtrip to/from proto in Python 2.
+  # In order to use BYTES a user type has to use typing.ByteString (because
+  # bytes == str, and we map str to STRING).
+  if IS_PYTHON_3:
+    all_nonoptional_primitives.extend([bytes])
+
+  all_optional_primitives = [
+      Optional[typ] for typ in all_nonoptional_primitives
+  ]
+
+  return all_nonoptional_primitives + all_optional_primitives
+
+
+def primitive_fields():
+  all_nonoptional_primitives = [
+      schema_pb2.FieldType(atomic_type=typ)
+      for typ in schema_pb2.AtomicType.values()
+      if typ is not schema_pb2.UNSPECIFIED
+  ]
+
+  # The bytes type cannot survive a roundtrip to/from proto in Python 2.
+  # In order to use BYTES a user type has to use typing.ByteString (because
+  # bytes == str, and we map str to STRING).
+  if not IS_PYTHON_3:
+    all_nonoptional_primitives.remove(
+        schema_pb2.FieldType(atomic_type=schema_pb2.BYTES))
+
+  all_optional_primitives = [
+      schema_pb2.FieldType(nullable=True, atomic_type=typ)
+      for typ in schema_pb2.AtomicType.values()
+      if typ is not schema_pb2.UNSPECIFIED
+  ]
+
+  return all_nonoptional_primitives + all_optional_primitives
+
+
+class FieldTypeTest(unittest.TestCase):
+  """ Tests for Runner API FieldType proto to/from typing conversions
+
+  There are two main tests: test_typing_survives_proto_roundtrip, and
+  test_proto_survives_typing_roundtrip. These are both necessary because Schemas
+  are cached by ID, so performing just one of them wouldn't necessarily exercise
+  all code paths.
+  """
+
+  def test_typing_survives_proto_roundtrip(self):
+    all_primitives = primitive_types()
+    basic_array_types = [Sequence[typ] for typ in all_primitives]
+
+    basic_map_types = [
+        Mapping[key_type,
+                value_type] for key_type, value_type in itertools.product(
+                    all_primitives, all_primitives)
+    ]
+
+    test_cases = all_primitives + \
+                 basic_array_types + \
+                 basic_map_types
+
+    for test_case in test_cases:
+      self.assertEqual(test_case,
+                       typing_from_runner_api(typing_to_runner_api(test_case)))
+
+  def test_proto_survives_typing_roundtrip(self):
+    all_primitives = primitive_fields()
+    basic_array_types = [
+        schema_pb2.FieldType(array_type=schema_pb2.ArrayType(element_type=typ))
+        for typ in all_primitives
+    ]
+
+    basic_map_types = [
+        schema_pb2.FieldType(
+            map_type=schema_pb2.MapType(
+                key_type=key_type, value_type=value_type)) for key_type,
+        value_type in itertools.product(all_primitives, all_primitives)
+    ]
+
+    test_cases = all_primitives + \
+                 basic_array_types + \
+                 basic_map_types
+
+    for test_case in test_cases:
+      self.assertEqual(test_case,
+                       typing_to_runner_api(typing_from_runner_api(test_case)))
+
+  def test_unknown_primitive_raise_valueerror(self):
+    self.assertRaises(ValueError, lambda: typing_to_runner_api(np.uint32))
+
+  def test_unknown_atomic_raise_valueerror(self):
+    self.assertRaises(
+        ValueError, lambda: typing_from_runner_api(
+            schema_pb2.FieldType(atomic_type=schema_pb2.UNSPECIFIED))
+    )
+
+  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
+  def test_str_raises_error_py2(self):
+    self.assertRaises(lambda: typing_to_runner_api(str))
+
+  def test_int_maps_to_int64(self):
+    self.assertEqual(
+        schema_pb2.FieldType(atomic_type=schema_pb2.INT64),
+        typing_to_runner_api(int))
+
+  def test_float_maps_to_float64(self):
+    self.assertEqual(
+        schema_pb2.FieldType(atomic_type=schema_pb2.DOUBLE),
+        typing_to_runner_api(float))
+
+
 class SchemaTest(unittest.TestCase):
   """ Tests for Runner API Schema proto to/from typing conversions
 
@@ -48,37 +169,7 @@ class SchemaTest(unittest.TestCase):
   """
 
   def test_typing_survives_proto_roundtrip(self):
-    all_nonoptional_primitives = [
-        np.int8,
-        np.int16,
-        np.int32,
-        np.int64,
-        np.float32,
-        np.float64,
-        unicode,
-        bool,
-    ]
-
-    # The bytes type cannot survive a roundtrip to/from proto in Python 2.
-    # In order to use BYTES a user type has to use typing.ByteString (because
-    # bytes == str, and we map str to STRING).
-    if IS_PYTHON_3:
-      all_nonoptional_primitives.extend([bytes])
-
-    all_optional_primitives = [
-        Optional[typ] for typ in all_nonoptional_primitives
-    ]
-
-    all_primitives = all_nonoptional_primitives + all_optional_primitives
-
-    basic_array_types = [Sequence[typ] for typ in all_primitives]
-
-    basic_map_types = [
-        Mapping[key_type,
-                value_type] for key_type, value_type in itertools.product(
-                    all_primitives, all_primitives)
-    ]
-
+    all_primitives = primitive_types()
     selected_schemas = [
         NamedTuple(
             'AllPrimitives',
@@ -93,49 +184,14 @@ class SchemaTest(unittest.TestCase):
         ])
     ]
 
-    test_cases = all_primitives + \
-                 basic_array_types + \
-                 basic_map_types + \
-                 selected_schemas
+    test_cases = selected_schemas
 
     for test_case in test_cases:
       self.assertEqual(test_case,
                        typing_from_runner_api(typing_to_runner_api(test_case)))
 
   def test_proto_survives_typing_roundtrip(self):
-    all_nonoptional_primitives = [
-        schema_pb2.FieldType(atomic_type=typ)
-        for typ in schema_pb2.AtomicType.values()
-        if typ is not schema_pb2.UNSPECIFIED
-    ]
-
-    # The bytes type cannot survive a roundtrip to/from proto in Python 2.
-    # In order to use BYTES a user type has to use typing.ByteString (because
-    # bytes == str, and we map str to STRING).
-    if not IS_PYTHON_3:
-      all_nonoptional_primitives.remove(
-          schema_pb2.FieldType(atomic_type=schema_pb2.BYTES))
-
-    all_optional_primitives = [
-        schema_pb2.FieldType(nullable=True, atomic_type=typ)
-        for typ in schema_pb2.AtomicType.values()
-        if typ is not schema_pb2.UNSPECIFIED
-    ]
-
-    all_primitives = all_nonoptional_primitives + all_optional_primitives
-
-    basic_array_types = [
-        schema_pb2.FieldType(array_type=schema_pb2.ArrayType(element_type=typ))
-        for typ in all_primitives
-    ]
-
-    basic_map_types = [
-        schema_pb2.FieldType(
-            map_type=schema_pb2.MapType(
-                key_type=key_type, value_type=value_type)) for key_type,
-        value_type in itertools.product(all_primitives, all_primitives)
-    ]
-
+    all_primitives = primitive_fields()
     selected_schemas = [
         schema_pb2.FieldType(
             row_type=schema_pb2.RowType(
@@ -188,39 +244,11 @@ class SchemaTest(unittest.TestCase):
                     ]))),
     ]
 
-    test_cases = all_primitives + \
-                 basic_array_types + \
-                 basic_map_types + \
-                 selected_schemas
+    test_cases = selected_schemas
 
     for test_case in test_cases:
       self.assertEqual(test_case,
                        typing_to_runner_api(typing_from_runner_api(test_case)))
-
-  def test_unknown_primitive_raise_valueerror(self):
-    self.assertRaises(ValueError, lambda: typing_to_runner_api(np.uint32))
-
-  def test_unknown_atomic_raise_valueerror(self):
-    self.assertRaises(
-        ValueError, lambda: typing_from_runner_api(
-            schema_pb2.FieldType(atomic_type=schema_pb2.UNSPECIFIED))
-    )
-
-  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
-  def test_str_raises_error_py2(self):
-    self.assertRaises(lambda: typing_to_runner_api(str))
-    self.assertRaises(lambda: typing_to_runner_api(
-        NamedTuple('Test', [('int', int), ('str', str)])))
-
-  def test_int_maps_to_int64(self):
-    self.assertEqual(
-        schema_pb2.FieldType(atomic_type=schema_pb2.INT64),
-        typing_to_runner_api(int))
-
-  def test_float_maps_to_float64(self):
-    self.assertEqual(
-        schema_pb2.FieldType(atomic_type=schema_pb2.DOUBLE),
-        typing_to_runner_api(float))
 
   def test_trivial_example(self):
     MyCuteClass = NamedTuple('MyCuteClass', [
@@ -265,6 +293,10 @@ class SchemaTest(unittest.TestCase):
     self.assertEqual(expected.row_type.schema.fields,
                      typing_to_runner_api(MyCuteClass).row_type.schema.fields)
 
+  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
+  def test_str_raises_error_py2(self):
+    self.assertRaises(lambda: typing_to_runner_api(
+        NamedTuple('Test', [('int', int), ('str', str)])))
 
 if __name__ == '__main__':
   unittest.main()

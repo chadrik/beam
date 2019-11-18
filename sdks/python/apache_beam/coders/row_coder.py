@@ -31,19 +31,22 @@ from apache_beam.coders.coders import TupleCoder
 from apache_beam.coders.coders import VarIntCoder
 from apache_beam.portability import common_urns
 from apache_beam.portability.api import schema_pb2
-from apache_beam.typehints.schemas import named_tuple_from_schema
-from apache_beam.typehints.schemas import named_tuple_to_schema
+from apache_beam.typehints.schemas import constructor_from_schema
+from apache_beam.typehints.schemas import type_from_schema
+from apache_beam.typehints.schemas import type_to_schema
+
 
 __all__ = ["RowCoder"]
 
 
 class RowCoder(FastCoder):
-  """ Coder for `typing.NamedTuple` instances.
+  """ Coder for instances of structured types, such as `typing.NamedTuple`.
 
   Implements the beam:coder:row:v1 standard coder spec.
   """
 
   def __init__(self, schema):
+    # type: (schema_pb2.Schema) -> None
     """Initializes a :class:`RowCoder`.
 
     Args:
@@ -63,7 +66,7 @@ class RowCoder(FastCoder):
     return all(c.is_deterministic() for c in self.components)
 
   def to_type_hint(self):
-    return named_tuple_from_schema(self.schema)
+    return type_from_schema(self.schema)
 
   def as_cloud_object(self, coders_context=None):
     raise NotImplementedError("as_cloud_object not supported for RowCoder")
@@ -81,11 +84,12 @@ class RowCoder(FastCoder):
     return RowCoder(payload)
 
   @staticmethod
-  def from_type_hint(named_tuple_type, registry):
-    return RowCoder(named_tuple_to_schema(named_tuple_type))
+  def from_type_hint(type_, registry):
+    return RowCoder(type_to_schema(type_))
 
   @staticmethod
   def coder_from_type(field_type):
+    # type: (schema_pb2.FieldType) -> Coder
     type_info = field_type.WhichOneof("type_info")
     if type_info == "atomic_type":
       if field_type.atomic_type in (schema_pb2.INT32,
@@ -112,8 +116,9 @@ class RowCoderImpl(StreamCoderImpl):
   NULL_MARKER_CODER = BytesCoder().get_impl()
 
   def __init__(self, schema, components):
+    # type: (schema_pb2.Schema, Iterable[Coder]) -> None
     self.schema = schema
-    self.constructor = named_tuple_from_schema(schema)
+    self.constructor = constructor_from_schema(schema)
     self.components = list(c.get_impl() for c in components)
     self.has_nullable_fields = any(
         field.type.nullable for field in self.schema.fields)
@@ -162,9 +167,9 @@ class RowCoderImpl(StreamCoderImpl):
     # Note that if this coder's schema has *fewer* attributes than the encoded
     # value, we just need to ignore the additional values, which will occur
     # here because we only decode as many values as we have coders for.
-    return self.constructor(*(
-        None if is_null else c.decode_from_stream(in_stream, True)
-        for c, is_null in zip(self.components, nulls)))
+    return self.constructor(
+        {f.name: None if is_null else c.decode_from_stream(in_stream, True)
+         for f, c, is_null in zip(self.schema.fields, self.components, nulls)})
 
   def _make_value_coder(self, nulls=itertools.repeat(False)):
     components = [

@@ -45,10 +45,13 @@ from __future__ import absolute_import
 
 import sys
 from typing import ByteString
+from typing import Dict
 from typing import Mapping
 from typing import NamedTuple
 from typing import Optional
 from typing import Sequence
+from typing import Tuple
+from typing import Type
 from uuid import uuid4
 
 import numpy as np
@@ -66,20 +69,34 @@ from apache_beam.typehints.native_type_compatibility import extract_optional_typ
 # Registry of typings for a schema by UUID
 class SchemaTypeRegistry(object):
   def __init__(self):
-    self.by_id = {}
-    self.by_typing = {}
+    self.by_id = {}  # type: Dict[SchemaConverter]
 
-  def add(self, typing, schema):
-    self.by_id[schema.id] = (typing, schema)
+  def add(self, converter):
+    # type: (SchemaConverter) -> None
+    from apache_beam import coders
+    typing = converter.type
+    if hasattr(typing, '__beam_schema_id__'):
+      if typing.__beam_schema_id__ != converter.schema.id:
+        raise ValueError("Type '%s' was previously registered with a "
+                         "different id" % typing)
+    else:
+      setattr(typing, '__beam_schema_id__', converter.schema.id)
+      self.by_id[converter.schema.id] = converter
+      coders.registry.register_coder(converter.type, coders.RowCoder)
 
-  def get_typing_by_id(self, unique_id):
-    result = self.by_id.get(unique_id, None)
-    return result[0] if result is not None else None
+  def get_by_schema(self, schema):
+    # type: (schema_pb2.Schema) -> Optional[SchemaConverter]
+    return self.by_id.get(schema.id, None)
 
-  def get_schema_by_id(self, unique_id):
-    result = self.by_id.get(unique_id, None)
-    return result[1] if result is not None else None
-
+  def get_by_type(self, type_):
+    # type: (Type) -> Optional[SchemaConverter]
+    if hasattr(type_, '__beam_schema_id__'):
+      result = SCHEMA_REGISTRY.by_id.get(type_.__beam_schema_id__, None)
+      if result is None:
+        raise ValueError("Type '%s' was previously registered but its schema "
+                         "is missing from the registry" % type_)
+      return result
+    return None
 
 SCHEMA_REGISTRY = SchemaTypeRegistry()
 
@@ -96,7 +113,7 @@ _PRIMITIVES = (
     (bool, schema_pb2.BOOLEAN),
     (bytes if sys.version_info.major >= 3 else ByteString,
      schema_pb2.BYTES),
-)
+)  # type: Tuple[Tuple[Type, int], ...]
 
 PRIMITIVE_TO_ATOMIC_TYPE = dict((typ, atomic) for typ, atomic in _PRIMITIVES)
 ATOMIC_TYPE_TO_PRIMITIVE = dict((atomic, typ) for typ, atomic in _PRIMITIVES)
@@ -116,23 +133,16 @@ PRIMITIVE_TO_ATOMIC_TYPE.update({
 
 
 def typing_to_runner_api(type_):
-  if _match_is_named_tuple(type_):
-    schema = None
-    if hasattr(type_, 'id'):
-      schema = SCHEMA_REGISTRY.get_schema_by_id(type_.id)
-    if schema is None:
-      fields = [
-          schema_pb2.Field(
-              name=name, type=typing_to_runner_api(type_._field_types[name]))
-          for name in type_._fields
-      ]
-      type_id = str(uuid4())
-      schema = schema_pb2.Schema(fields=fields, id=type_id)
-      SCHEMA_REGISTRY.add(type_, schema)
-
+  # type: (Type) -> schema_pb2.FieldType
+  converter = SCHEMA_REGISTRY.get_by_type(type_)
+  if converter is None:
+    converter = SchemaConverter.from_type(type_)
+    if converter is not None:
+      SCHEMA_REGISTRY.add(converter)
+  if converter is not None:
     return schema_pb2.FieldType(
         row_type=schema_pb2.RowType(
-            schema=schema))
+            schema=converter.schema))
 
   # All concrete types (other than NamedTuple sub-classes) should map to
   # a supported primitive type.
@@ -168,6 +178,7 @@ def typing_to_runner_api(type_):
 
 
 def typing_from_runner_api(fieldtype_proto):
+  # type: (schema_pb2.FieldType) -> Type
   if fieldtype_proto.nullable:
     # In order to determine the inner type, create a copy of fieldtype_proto
     # with nullable=False and pass back to typing_from_runner_api
@@ -193,26 +204,150 @@ def typing_from_runner_api(fieldtype_proto):
     ]
   elif type_info == "row_type":
     schema = fieldtype_proto.row_type.schema
-    user_type = SCHEMA_REGISTRY.get_typing_by_id(schema.id)
-    if user_type is None:
-      from apache_beam import coders
-      type_name = 'BeamSchema_{}'.format(schema.id.replace('-', '_'))
-      user_type = NamedTuple(type_name,
-                             [(field.name, typing_from_runner_api(field.type))
-                              for field in schema.fields])
-      user_type.id = schema.id
-      SCHEMA_REGISTRY.add(user_type, schema)
-      coders.registry.register_coder(user_type, coders.RowCoder)
-    return user_type
+    converter = SCHEMA_REGISTRY.get_by_schema(schema)
+    if converter is None:
+      converter = NamedTupleSchemaConverter.from_schema(schema)
+      SCHEMA_REGISTRY.add(converter)
+    return converter.type
 
   elif type_info == "logical_type":
     pass  # TODO
 
 
-def named_tuple_from_schema(schema):
+def type_from_schema(schema):
+  # type: (schema_pb2.FieldType) -> Type
   return typing_from_runner_api(
       schema_pb2.FieldType(row_type=schema_pb2.RowType(schema=schema)))
 
 
-def named_tuple_to_schema(named_tuple):
-  return typing_to_runner_api(named_tuple).row_type.schema
+def constructor_from_schema(schema):
+  type_ = type_from_schema(schema)
+  return SCHEMA_REGISTRY.get_by_type(type_).get_constructor()
+
+
+def type_to_schema(type_):
+  # type: (Type) -> schema_pb2.FieldType
+  return typing_to_runner_api(type_).row_type.schema
+
+
+class SchemaConverter(object):
+  converters = []
+
+  def __init__(self, type=None, schema=None):
+    self._type = type
+    self._schema = schema
+    if type is None and schema is None:
+      raise ValueError("'type' and 'schema' cannot both be None")
+
+  @classmethod
+  def register(cls, converter):
+    """Register a converter class
+
+    :param converter: SchemaConverter class
+    :return: SchemaConverter class
+    """
+    cls.converters.append(converter)
+    return converter
+
+  @classmethod
+  def from_type(cls, type_):
+    """Find and instantiate a converter for the given type.
+
+    :param type_: type
+    :return: SchemaConverter or None
+    """
+    for converter_cls in cls.converters:
+      if converter_cls.claim_type(type_):
+        return converter_cls(type=type_)
+
+  @classmethod
+  def from_schema(cls, schema):
+    """Instantiate this converter with the given schema.
+
+    :param schema: schema_pb2.Schema
+    :return: SchemaConverter or None
+    """
+    return cls(schema=schema)
+
+  def get_fields(self):
+    raise NotImplementedError
+
+  @property
+  def schema(self):
+    """Get the schema, creating it from the type if necessary.
+
+    :return: schema_pb2.Schema
+    """
+    if self._schema is None:
+      type_id = str(uuid4())
+      self._schema = schema_pb2.Schema(fields=self.get_fields(), id=type_id)
+    return self._schema
+
+  @property
+  def type(self):
+    """Get the type, creating it from the schema if necessary
+
+    :return: type
+    """
+    if self._type is None:
+      type_name = 'BeamSchema_{}'.format(self._schema.id.replace('-', '_'))
+      self._type = self.make_type(type_name)
+    return self._type
+
+  def make_type(self, type_name):
+    """Create the class for this schema.
+
+    :param type_name: the suggested name for the class
+    :return: type
+    """
+    raise NotImplementedError
+
+  def get_constructor(self):
+    """Return a constructor for this class.
+
+    :return: callable that takes a dict of field name to values and returns
+      an instance of `self.type`. The default implementation assumes `self.type`
+      accepts keyword args.
+    """
+    def constructor(values):
+      return self._type(**values)
+    return constructor
+
+
+@SchemaConverter.register
+class NamedTupleSchemaConverter(SchemaConverter):
+  @classmethod
+  def claim_type(cls, type_):
+    return _match_is_named_tuple(type_)
+
+  def get_fields(self):
+    return [
+        schema_pb2.Field(
+            name=name, type=typing_to_runner_api(self._type._field_types[name]))
+        for name in self._type._fields]
+
+  def make_type(self, type_name):
+    return NamedTuple(type_name,
+                      [(field.name, typing_from_runner_api(field.type))
+                       for field in self._schema.fields])
+
+
+@SchemaConverter.register
+class TypedDictSchemaConverter(SchemaConverter):
+  @classmethod
+  def claim_type(cls, type_):
+    return (isinstance(type_, type) and issubclass(type_, dict)
+            and type_ is not dict and hasattr(type_, '__annotations__'))
+
+  def get_fields(self):
+    return [
+        schema_pb2.Field(
+            name=name, type=typing_to_runner_api(field_type))
+        for name, field_type in self._type.__annotations__.items()]
+
+  def make_type(self, type_name):
+    import mypy_extensions
+    return mypy_extensions.TypedDict(
+        type_name,
+        [(field.name, typing_from_runner_api(field.type))
+         for field in self._schema.fields])
