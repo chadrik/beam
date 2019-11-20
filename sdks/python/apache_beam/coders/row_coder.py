@@ -120,7 +120,7 @@ class RowCoderImpl(StreamCoderImpl):
   def __init__(self, schema, components):
     # type: (schema_pb2.Schema, Iterable[Coder]) -> None
     self.schema = schema
-    self.constructor = converter_from_schema(schema).get_constructor()
+    self.converter = converter_from_schema(schema)
     self.components = list(c.get_impl() for c in components)
     self.has_nullable_fields = any(
         field.type.nullable for field in self.schema.fields)
@@ -128,7 +128,7 @@ class RowCoderImpl(StreamCoderImpl):
   def encode_to_stream(self, value, out, nested):
     nvals = len(self.schema.fields)
     self.SIZE_CODER.encode_to_stream(nvals, out, True)
-    attrs = [getattr(value, f.name) for f in self.schema.fields]
+    attrs = self.converter.get_field_values(value)
 
     words = array('B')
     if self.has_nullable_fields:
@@ -169,7 +169,8 @@ class RowCoderImpl(StreamCoderImpl):
     # Note that if this coder's schema has *fewer* attributes than the encoded
     # value, we just need to ignore the additional values, which will occur
     # here because we only decode as many values as we have coders for.
-    return self.constructor(
+    constructor = self.converter.get_constructor()
+    return constructor(
         OrderedDict(
             (f.name, None if is_null else c.decode_from_stream(in_stream, True))
             for f, c, is_null in

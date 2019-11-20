@@ -39,7 +39,6 @@ from apache_beam import coders
 from apache_beam.coders import typecoders
 from apache_beam.portability.api import schema_pb2
 from apache_beam.typehints.native_type_compatibility import _match_is_named_tuple
-from apache_beam.typehints.schemas import register_schema
 from apache_beam.typehints.schemas import typing_from_runner_api
 from apache_beam.typehints.schemas import typing_to_runner_api
 
