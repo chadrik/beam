@@ -19,45 +19,58 @@ from __future__ import absolute_import
 import logging
 import typing
 import unittest
+from contextlib import contextmanager
 from itertools import chain
 
+import attr
 import numpy as np
+from mypy_extensions import TypedDict
 from past.builtins import unicode
+from mock import patch
 
+from apache_beam import coders
+from apache_beam.coders import typecoders
 from apache_beam.coders import RowCoder
-from apache_beam.coders.typecoders import registry as coders_registry
 from apache_beam.portability.api import schema_pb2
 from apache_beam.typehints.schemas import typing_to_runner_api
 
-Person = typing.NamedTuple("Person", [
-    ("name", unicode),
-    ("age", np.int32),
-    ("address", typing.Optional[unicode]),
-    ("aliases", typing.List[unicode]),
-])
 
-coders_registry.register_coder(Person, RowCoder)
+class RowCoderTestMixin(object):
 
+  def get_test_cases(self):
+    raise NotImplementedError
 
-class RowCoderTest(unittest.TestCase):
-  TEST_CASES = [
-      Person("Jon Snow", 23, None, ["crow", "wildling"]),
-      Person("Daenerys Targaryen", 25, "Westeros", ["Mother of Dragons"]),
-      Person("Michael Bluth", 30, None, [])
-  ]
+  def get_person_type(self):
+    raise NotImplementedError
 
-  def test_create_row_coder_from_named_tuple(self):
-    expected_coder = RowCoder(typing_to_runner_api(Person).row_type.schema)
-    real_coder = coders_registry.get_coder(Person)
+  @contextmanager
+  def person_registry(self):
+    Person = self.get_person_type()
+    with patch.object(coders, 'registry',
+                      typecoders.CoderRegistry()) as mock_registry:
+      mock_registry.register_coder(Person, RowCoder)
+      yield mock_registry, Person
 
-    for test_case in self.TEST_CASES:
-      self.assertEqual(
-          expected_coder.encode(test_case), real_coder.encode(test_case))
+  def test_create_row_coder_from_type(self):
 
-      self.assertEqual(test_case,
-                       real_coder.decode(real_coder.encode(test_case)))
+    Person = self.get_person_type()
+
+    with patch.object(coders, 'registry',
+                      typecoders.CoderRegistry()) as mock_registry:
+      mock_registry.register_coder(Person, RowCoder)
+
+      expected_coder = RowCoder(typing_to_runner_api(Person).row_type.schema)
+      real_coder = mock_registry.get_coder(Person)
+
+      for test_case in self.get_test_cases():
+        self.assertEqual(
+            expected_coder.encode(test_case), real_coder.encode(test_case))
+
+        self.assertEqual(test_case,
+                         real_coder.decode(real_coder.encode(test_case)))
 
   def test_create_row_coder_from_schema(self):
+
     schema = schema_pb2.Schema(
         id="person",
         fields=[
@@ -80,10 +93,58 @@ class RowCoderTest(unittest.TestCase):
                         element_type=schema_pb2.FieldType(
                             atomic_type=schema_pb2.STRING)))),
         ])
-    coder = RowCoder(schema)
 
-    for test_case in self.TEST_CASES:
-      self.assertEqual(test_case, coder.decode(coder.encode(test_case)))
+    Person = self.get_person_type()
+
+    with patch.object(coders, 'registry',
+                      typecoders.CoderRegistry()) as mock_registry:
+      mock_registry.register_coder(Person, RowCoder)
+      # type should be registered
+      self.assertEqual([Person], mock_registry.custom_types)
+
+      coder = RowCoder(schema)
+
+      for test_case in self.get_test_cases():
+        result = coder.decode(coder.encode(test_case))
+        self.assertEqual(test_case, result)
+        self.assertIs(type(test_case), type(result))
+
+      # nothing new should be registered
+      self.assertEqual([Person], mock_registry.custom_types)
+
+    # repeat without explicit registration
+    with patch.object(coders, 'registry',
+                      typecoders.CoderRegistry()) as mock_registry:
+
+      # type should not be registered
+      self.assertEqual([], mock_registry.custom_types)
+
+      coder = RowCoder(schema)
+
+      for test_case in self.get_test_cases():
+        self.assertEqual(test_case, coder.decode(coder.encode(test_case)))
+
+      # nothing new should be registered
+      self.assertEqual([], mock_registry.custom_types)
+
+
+class NamedTupleRowCoderTest(unittest.TestCase, RowCoderTestMixin):
+  Person = typing.NamedTuple("Person", [
+      ("name", unicode),
+      ("age", np.int32),
+      ("address", typing.Optional[unicode]),
+      ("aliases", typing.List[unicode]),
+  ])
+
+  def get_test_cases(self):
+    return [
+        self.Person("Jon Snow", 23, None, ["crow", "wildling"]),
+        self.Person("Daenerys Targaryen", 25, "Westeros", ["Mother of Dragons"]),
+        self.Person("Michael Bluth", 30, None, [])
+    ]
+
+  def get_person_type(self):
+    return self.Person
 
   @unittest.skip(
       "BEAM-8030 - Overflow behavior in VarIntCoder is currently inconsistent"
@@ -161,6 +222,52 @@ class RowCoderTest(unittest.TestCase):
     self.assertEqual(
         New(None, "baz", None),
         new_coder.decode(old_coder.encode(Old(None, "baz"))))
+
+
+class TypedDictRowCoderTest(unittest.TestCase, RowCoderTestMixin):
+
+  Person = TypedDict("Person", [
+      ("name", unicode),
+      ("age", np.int32),
+      ("address", typing.Optional[unicode]),
+      ("aliases", typing.List[unicode]),
+  ])
+
+  def get_person_type(self):
+    return self.Person
+
+  def get_test_cases(self):
+    Person = self.get_person_type()
+    return [
+        Person(name="Jon Snow", age=23, address=None,
+               aliases=["crow", "wildling"]),
+        Person(name="Daenerys Targaryen", age=25, address="Westeros",
+               aliases=["Mother of Dragons"]),
+        Person(name="Michael Bluth", age=30, address=None, aliases=[])
+    ]
+
+
+class AttrstRowCoderTest(unittest.TestCase, RowCoderTestMixin):
+
+  @attr.s
+  class Person(object):
+    name = attr.ib(type=unicode)
+    age = attr.ib(type=np.int32)
+    address = attr.ib(type=typing.Optional[unicode])
+    aliases = attr.ib(type=typing.List[unicode])
+
+  def get_person_type(self):
+    return self.Person
+
+  def get_test_cases(self):
+    Person = self.get_person_type()
+    return [
+        Person(name="Jon Snow", age=23, address=None,
+               aliases=["crow", "wildling"]),
+        Person(name="Daenerys Targaryen", age=25, address="Westeros",
+               aliases=["Mother of Dragons"]),
+        Person(name="Michael Bluth", age=30, address=None, aliases=[])
+    ]
 
 
 if __name__ == "__main__":
