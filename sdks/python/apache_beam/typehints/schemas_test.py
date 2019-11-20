@@ -261,18 +261,18 @@ class SchemaTestMixin(object):
         self.get_complex_type(),
     ]
 
-    for test_type in selected_types:
+    for test_type, child_types in selected_types:
       with patch.object(coders, 'registry',
                         typecoders.CoderRegistry()) as mock_registry:
         self.assertFalse(hasattr(test_type, '__beam_schema_id__'))
         schema = typing_to_runner_api(test_type)
-        # type should be registered
-        self.assertEqual([test_type], mock_registry.custom_types)
+        # type should be registered (child types will also be present)
+        self.assertEqual(child_types + [test_type], mock_registry.custom_types)
         self.assertEqual(getattr(test_type, '__beam_schema_id__'),
                          schema.row_type.schema.id)
         self.assertIs(test_type, typing_from_runner_api(schema))
         # nothing new should be registered
-        self.assertEqual([test_type], mock_registry.custom_types)
+        self.assertEqual(child_types + [test_type], mock_registry.custom_types)
 
   def test_trivial_example(self):
     test_class = self.get_person_type()
@@ -317,19 +317,24 @@ class SchemaTestMixin(object):
 
 class NamedTupleSchemaTest(unittest.TestCase, SchemaTestMixin):
   def get_type_with_primitive_fields(self):
-    return NamedTuple('AllPrimitives', [
+    schema_type = NamedTuple('AllPrimitives', [
         ('field%d' % i, typ) for i, typ in enumerate(primitive_types())
     ])
+    return schema_type, []
 
   def get_complex_type(self):
-    return NamedTuple('ComplexSchema', [
+    child_type = NamedTuple('ChildSchema', [('name', unicode)])
+
+    schema_type = NamedTuple('ComplexSchema', [
         ('id', np.int64),
         ('name', unicode),
         ('optional_map', Optional[Mapping[unicode,
                                           Optional[np.float64]]]),
         ('optional_array', Optional[Sequence[np.float32]]),
         ('array_optional', Sequence[Optional[bool]]),
+        ('nested_schema', Sequence[child_type]),
     ])
+    return schema_type, [child_type]
 
   def get_person_type(self):
     return NamedTuple('Person', [
@@ -343,19 +348,23 @@ class NamedTupleSchemaTest(unittest.TestCase, SchemaTestMixin):
 
 class TypedDictSchemaTest(unittest.TestCase, SchemaTestMixin):
   def get_type_with_primitive_fields(self):
-    return TypedDict('AllPrimitives', [
+    schema_type =  TypedDict('AllPrimitives', [
         ('field%d' % i, typ) for i, typ in enumerate(primitive_types())
     ])
+    return schema_type, []
 
   def get_complex_type(self):
-    return TypedDict('ComplexSchema', [
+    child_type = TypedDict('ChildSchema', [('name', unicode)])
+
+    schema_type = TypedDict('ComplexSchema', [
         ('id', np.int64),
         ('name', unicode),
         ('optional_map', Optional[Mapping[unicode,
                                           Optional[np.float64]]]),
         ('optional_array', Optional[Sequence[np.float32]]),
-        ('array_optional', Sequence[Optional[bool]]),
+        ('nested_schema', Sequence[child_type]),
     ])
+    return schema_type, [child_type]
 
   def get_person_type(self):
     return TypedDict('Person', [
