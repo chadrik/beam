@@ -203,31 +203,10 @@ def typing_from_runner_api(fieldtype_proto):
         typing_from_runner_api(fieldtype_proto.map_type.value_type)
     ]
   elif type_info == "row_type":
-    schema = fieldtype_proto.row_type.schema
-    converter = SCHEMA_REGISTRY.get_by_schema(schema)
-    if converter is None:
-      converter = NamedTupleSchemaConverter.from_schema(schema)
-      SCHEMA_REGISTRY.add(converter)
-    return converter.type
+    return type_from_schema(fieldtype_proto.row_type.schema)
 
   elif type_info == "logical_type":
     pass  # TODO
-
-
-def type_from_schema(schema):
-  # type: (schema_pb2.FieldType) -> Type
-  return typing_from_runner_api(
-      schema_pb2.FieldType(row_type=schema_pb2.RowType(schema=schema)))
-
-
-def constructor_from_schema(schema):
-  type_ = type_from_schema(schema)
-  return SCHEMA_REGISTRY.get_by_type(type_).get_constructor()
-
-
-def type_to_schema(type_):
-  # type: (Type) -> schema_pb2.FieldType
-  return typing_to_runner_api(type_).row_type.schema
 
 
 class SchemaConverter(object):
@@ -303,15 +282,13 @@ class SchemaConverter(object):
     raise NotImplementedError
 
   def get_constructor(self):
+    # type: () -> Callable[[OrderedDict[str, Any]], Type]
     """Return a constructor for this class.
 
-    :return: callable that takes a dict of field name to values and returns
-      an instance of `self.type`. The default implementation assumes `self.type`
-      accepts keyword args.
+    :return: callable that takes a OrderedDict of field name to values and
+      returns an instance of `self.type`.
     """
-    def constructor(values):
-      return self._type(**values)
-    return constructor
+    raise NotImplementedError
 
 
 @SchemaConverter.register
@@ -330,6 +307,11 @@ class NamedTupleSchemaConverter(SchemaConverter):
     return NamedTuple(type_name,
                       [(field.name, typing_from_runner_api(field.type))
                        for field in self._schema.fields])
+
+  def get_constructor(self):
+    def constructor(values):
+      return self._type(*values.values())
+    return constructor
 
 
 @SchemaConverter.register
@@ -351,3 +333,66 @@ class TypedDictSchemaConverter(SchemaConverter):
         type_name,
         [(field.name, typing_from_runner_api(field.type))
          for field in self._schema.fields])
+
+  def get_constructor(self):
+    def constructor(values):
+      return self._type(**values)
+    return constructor
+
+
+if sys.version_info[:2] >= (3, 7):
+  import dataclasses
+
+  @SchemaConverter.register
+  class DataclassSchemaConverter(SchemaConverter):
+    @classmethod
+    def claim_type(cls, type_):
+      return dataclasses.is_dataclass(type_)
+
+    def get_fields(self):
+      return [
+          schema_pb2.Field(
+              name=field.name, type=typing_to_runner_api(field.type))
+          for field in dataclasses.fields(self._type)]
+
+    def make_type(self, type_name):
+      return dataclasses.make_dataclass(
+          type_name,
+          [(field.name, typing_from_runner_api(field.type))
+           for field in self._schema.fields])
+
+    def get_constructor(self):
+      def constructor(values):
+        return self._type(**values)
+
+      return constructor
+
+
+def converter_from_schema(schema):
+  # type: (schema_pb2.Schema) -> SchemaConverter
+  converter = SCHEMA_REGISTRY.get_by_schema(schema)
+  if converter is None:
+    converter = NamedTupleSchemaConverter.from_schema(schema)
+    SCHEMA_REGISTRY.add(converter)
+  return converter
+
+
+def type_from_schema(schema):
+  # type: (schema_pb2.Schema) -> Type
+  return converter_from_schema(schema).type
+
+
+def type_to_schema(type_):
+  # type: (Type) -> schema_pb2.FieldType
+  return typing_to_runner_api(type_).row_type.schema
+
+
+def register_schema(type_):
+  """Enable the use of the RowCoder with this type.
+
+  Validates that the type can be converted to a schema.
+
+  Can be used as a decorator.
+  """
+  typing_to_runner_api(type_)
+  return type_

@@ -19,6 +19,8 @@ from __future__ import absolute_import
 
 import itertools
 from array import array
+from collections import OrderedDict
+from typing import Iterable
 
 from apache_beam.coders.coder_impl import StreamCoderImpl
 from apache_beam.coders.coders import BytesCoder
@@ -31,7 +33,7 @@ from apache_beam.coders.coders import TupleCoder
 from apache_beam.coders.coders import VarIntCoder
 from apache_beam.portability import common_urns
 from apache_beam.portability.api import schema_pb2
-from apache_beam.typehints.schemas import constructor_from_schema
+from apache_beam.typehints.schemas import converter_from_schema
 from apache_beam.typehints.schemas import type_from_schema
 from apache_beam.typehints.schemas import type_to_schema
 
@@ -118,7 +120,7 @@ class RowCoderImpl(StreamCoderImpl):
   def __init__(self, schema, components):
     # type: (schema_pb2.Schema, Iterable[Coder]) -> None
     self.schema = schema
-    self.constructor = constructor_from_schema(schema)
+    self.constructor = converter_from_schema(schema).get_constructor()
     self.components = list(c.get_impl() for c in components)
     self.has_nullable_fields = any(
         field.type.nullable for field in self.schema.fields)
@@ -168,8 +170,10 @@ class RowCoderImpl(StreamCoderImpl):
     # value, we just need to ignore the additional values, which will occur
     # here because we only decode as many values as we have coders for.
     return self.constructor(
-        {f.name: None if is_null else c.decode_from_stream(in_stream, True)
-         for f, c, is_null in zip(self.schema.fields, self.components, nulls)})
+        OrderedDict(
+            (f.name, None if is_null else c.decode_from_stream(in_stream, True))
+            for f, c, is_null in
+            zip(self.schema.fields, self.components, nulls)))
 
   def _make_value_coder(self, nulls=itertools.repeat(False)):
     components = [

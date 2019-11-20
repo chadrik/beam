@@ -29,9 +29,15 @@ from typing import Optional
 from typing import Sequence
 
 import numpy as np
+from mypy_extensions import TypedDict
 from past.builtins import unicode
+from mock import patch
 
+from apache_beam import coders
+from apache_beam.coders import typecoders
 from apache_beam.portability.api import schema_pb2
+from apache_beam.typehints.native_type_compatibility import _match_is_named_tuple
+from apache_beam.typehints.schemas import register_schema
 from apache_beam.typehints.schemas import typing_from_runner_api
 from apache_beam.typehints.schemas import typing_to_runner_api
 
@@ -113,7 +119,7 @@ class FieldTypeTest(unittest.TestCase):
       self.assertEqual(test_case,
                        typing_from_runner_api(typing_to_runner_api(test_case)))
 
-  def test_proto_survives_typing_roundtrip(self):
+  def test_field_proto_survives_typing_roundtrip(self):
     all_primitives = primitive_fields()
     basic_array_types = [
         schema_pb2.FieldType(array_type=schema_pb2.ArrayType(element_type=typ))
@@ -135,62 +141,7 @@ class FieldTypeTest(unittest.TestCase):
       self.assertEqual(test_case,
                        typing_to_runner_api(typing_from_runner_api(test_case)))
 
-  def test_unknown_primitive_raise_valueerror(self):
-    self.assertRaises(ValueError, lambda: typing_to_runner_api(np.uint32))
-
-  def test_unknown_atomic_raise_valueerror(self):
-    self.assertRaises(
-        ValueError, lambda: typing_from_runner_api(
-            schema_pb2.FieldType(atomic_type=schema_pb2.UNSPECIFIED))
-    )
-
-  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
-  def test_str_raises_error_py2(self):
-    self.assertRaises(lambda: typing_to_runner_api(str))
-
-  def test_int_maps_to_int64(self):
-    self.assertEqual(
-        schema_pb2.FieldType(atomic_type=schema_pb2.INT64),
-        typing_to_runner_api(int))
-
-  def test_float_maps_to_float64(self):
-    self.assertEqual(
-        schema_pb2.FieldType(atomic_type=schema_pb2.DOUBLE),
-        typing_to_runner_api(float))
-
-
-class SchemaTest(unittest.TestCase):
-  """ Tests for Runner API Schema proto to/from typing conversions
-
-  There are two main tests: test_typing_survives_proto_roundtrip, and
-  test_proto_survives_typing_roundtrip. These are both necessary because Schemas
-  are cached by ID, so performing just one of them wouldn't necessarily exercise
-  all code paths.
-  """
-
-  def test_typing_survives_proto_roundtrip(self):
-    all_primitives = primitive_types()
-    selected_schemas = [
-        NamedTuple(
-            'AllPrimitives',
-            [('field%d' % i, typ) for i, typ in enumerate(all_primitives)]),
-        NamedTuple('ComplexSchema', [
-            ('id', np.int64),
-            ('name', unicode),
-            ('optional_map', Optional[Mapping[unicode,
-                                              Optional[np.float64]]]),
-            ('optional_array', Optional[Sequence[np.float32]]),
-            ('array_optional', Sequence[Optional[bool]]),
-        ])
-    ]
-
-    test_cases = selected_schemas
-
-    for test_case in test_cases:
-      self.assertEqual(test_case,
-                       typing_from_runner_api(typing_to_runner_api(test_case)))
-
-  def test_proto_survives_typing_roundtrip(self):
+  def test_schema_proto_survives_typing_roundtrip(self):
     all_primitives = primitive_fields()
     selected_schemas = [
         schema_pb2.FieldType(
@@ -244,20 +195,87 @@ class SchemaTest(unittest.TestCase):
                     ]))),
     ]
 
-    test_cases = selected_schemas
+    for test_schema in selected_schemas:
+      with patch.object(coders, 'registry',
+                        typecoders.CoderRegistry()) as mock_registry:
+        typing = typing_from_runner_api(test_schema)
+        # type should be registered
+        self.assertEqual([typing], mock_registry.custom_types)
+        self.assertEqual(getattr(typing, '__beam_schema_id__'),
+                         test_schema.row_type.schema.id)
+        self.assertTrue(_match_is_named_tuple(typing))
+        self.assertEqual(test_schema, typing_to_runner_api(typing))
+        # nothing new should be registered
+        self.assertEqual([typing], mock_registry.custom_types)
 
-    for test_case in test_cases:
-      self.assertEqual(test_case,
-                       typing_to_runner_api(typing_from_runner_api(test_case)))
+  def test_unknown_primitive_raise_valueerror(self):
+    self.assertRaises(ValueError, lambda: typing_to_runner_api(np.uint32))
+
+  def test_unknown_atomic_raise_valueerror(self):
+    self.assertRaises(
+        ValueError, lambda: typing_from_runner_api(
+            schema_pb2.FieldType(atomic_type=schema_pb2.UNSPECIFIED))
+    )
+
+  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
+  def test_str_raises_error_py2(self):
+    self.assertRaises(lambda: typing_to_runner_api(str))
+
+  def test_int_maps_to_int64(self):
+    self.assertEqual(
+        schema_pb2.FieldType(atomic_type=schema_pb2.INT64),
+        typing_to_runner_api(int))
+
+  def test_float_maps_to_float64(self):
+    self.assertEqual(
+        schema_pb2.FieldType(atomic_type=schema_pb2.DOUBLE),
+        typing_to_runner_api(float))
+
+  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
+  def test_str_raises_error_py2(self):
+    self.assertRaises(lambda: typing_to_runner_api(
+        NamedTuple('Test', [('int', int), ('str', str)])))
+
+
+class SchemaTestMixin(object):
+  """ Tests for Runner API Schema proto to/from typing conversions
+
+  There are two main tests: test_typing_survives_proto_roundtrip, and
+  test_proto_survives_typing_roundtrip. These are both necessary because Schemas
+  are cached by ID, so performing just one of them wouldn't necessarily exercise
+  all code paths.
+  """
+
+  def get_type_with_primitive_fields(self):
+    raise NotImplementedError
+
+  def get_complex_type(self):
+    raise NotImplementedError
+
+  def get_person_type(self):
+    raise NotImplementedError
+
+  def test_typing_survives_proto_roundtrip(self):
+    selected_types = [
+        self.get_type_with_primitive_fields(),
+        self.get_complex_type(),
+    ]
+
+    for test_type in selected_types:
+      with patch.object(coders, 'registry',
+                        typecoders.CoderRegistry()) as mock_registry:
+        self.assertFalse(hasattr(test_type, '__beam_schema_id__'))
+        schema = typing_to_runner_api(test_type)
+        # type should be registered
+        self.assertEqual([test_type], mock_registry.custom_types)
+        self.assertEqual(getattr(test_type, '__beam_schema_id__'),
+                         schema.row_type.schema.id)
+        self.assertIs(test_type, typing_from_runner_api(schema))
+        # nothing new should be registered
+        self.assertEqual([test_type], mock_registry.custom_types)
 
   def test_trivial_example(self):
-    MyCuteClass = NamedTuple('MyCuteClass', [
-        ('name', unicode),
-        ('age', Optional[int]),
-        ('interests', List[unicode]),
-        ('height', float),
-        ('blob', ByteString),
-    ])
+    test_class = self.get_person_type()
 
     expected = schema_pb2.FieldType(
         row_type=schema_pb2.RowType(
@@ -290,13 +308,63 @@ class SchemaTest(unittest.TestCase):
 
     # Only test that the fields are equal. If we attempt to test the entire type
     # or the entire schema, the generated id will break equality.
-    self.assertEqual(expected.row_type.schema.fields,
-                     typing_to_runner_api(MyCuteClass).row_type.schema.fields)
+    with patch.object(coders, 'registry',
+                      typecoders.CoderRegistry()) as mock_registry:
+      schema = typing_to_runner_api(test_class)
+      self.assertEqual(expected.row_type.schema.fields,
+                       schema.row_type.schema.fields)
 
-  @unittest.skipIf(IS_PYTHON_3, 'str is acceptable in python 3')
-  def test_str_raises_error_py2(self):
-    self.assertRaises(lambda: typing_to_runner_api(
-        NamedTuple('Test', [('int', int), ('str', str)])))
+
+class NamedTupleSchemaTest(unittest.TestCase, SchemaTestMixin):
+  def get_type_with_primitive_fields(self):
+    return NamedTuple('AllPrimitives', [
+        ('field%d' % i, typ) for i, typ in enumerate(primitive_types())
+    ])
+
+  def get_complex_type(self):
+    return NamedTuple('ComplexSchema', [
+        ('id', np.int64),
+        ('name', unicode),
+        ('optional_map', Optional[Mapping[unicode,
+                                          Optional[np.float64]]]),
+        ('optional_array', Optional[Sequence[np.float32]]),
+        ('array_optional', Sequence[Optional[bool]]),
+    ])
+
+  def get_person_type(self):
+    return NamedTuple('Person', [
+        ('name', unicode),
+        ('age', Optional[int]),
+        ('interests', List[unicode]),
+        ('height', float),
+        ('blob', ByteString),
+    ])
+
+
+class TypedDictSchemaTest(unittest.TestCase, SchemaTestMixin):
+  def get_type_with_primitive_fields(self):
+    return TypedDict('AllPrimitives', [
+        ('field%d' % i, typ) for i, typ in enumerate(primitive_types())
+    ])
+
+  def get_complex_type(self):
+    return TypedDict('ComplexSchema', [
+        ('id', np.int64),
+        ('name', unicode),
+        ('optional_map', Optional[Mapping[unicode,
+                                          Optional[np.float64]]]),
+        ('optional_array', Optional[Sequence[np.float32]]),
+        ('array_optional', Sequence[Optional[bool]]),
+    ])
+
+  def get_person_type(self):
+    return TypedDict('Person', [
+        ('name', unicode),
+        ('age', Optional[int]),
+        ('interests', List[unicode]),
+        ('height', float),
+        ('blob', ByteString),
+    ])
 
 if __name__ == '__main__':
   unittest.main()
