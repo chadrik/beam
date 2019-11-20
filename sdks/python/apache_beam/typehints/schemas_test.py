@@ -18,6 +18,7 @@
 
 from __future__ import absolute_import
 
+from collections import OrderedDict
 import itertools
 import sys
 import unittest
@@ -28,6 +29,7 @@ from typing import NamedTuple
 from typing import Optional
 from typing import Sequence
 
+import attr
 import numpy as np
 from mypy_extensions import TypedDict
 from past.builtins import unicode
@@ -374,6 +376,44 @@ class TypedDictSchemaTest(unittest.TestCase, SchemaTestMixin):
         ('height', float),
         ('blob', ByteString),
     ])
+
+
+class AttrsSchemaTest(unittest.TestCase, SchemaTestMixin):
+  def get_type_with_primitive_fields(self):
+    schema_type = attr.make_class(
+        'AllPrimitives',
+        OrderedDict(
+            ('field%d' % i, attr.ib(type=typ))
+            for i, typ in enumerate(primitive_types())))
+    return schema_type, []
+
+  def get_complex_type(self):
+    @attr.s
+    class ChildSchema(object):
+      name = attr.ib(type=unicode)
+
+    @attr.s
+    class ComplexSchema(object):
+      id = attr.ib(type=np.int64)
+      name = attr.ib(type=unicode)
+      optional_map = attr.ib(type=Optional[Mapping[unicode,
+                                                   Optional[np.float64]]])
+      optional_array = attr.ib(type=Optional[Sequence[np.float32]])
+      nested_schema = attr.ib(type=Sequence[ChildSchema])
+
+    return ComplexSchema, [ChildSchema]
+
+  def get_person_type(self):
+    @attr.s
+    class Person(object):
+      name = attr.ib(type=unicode)
+      age = attr.ib(type=Optional[int])
+      interests = attr.ib(type=List[unicode])
+      height = attr.ib(type=float)
+      blob = attr.ib(type=ByteString)
+
+    return Person
+
 
 if __name__ == '__main__':
   unittest.main()

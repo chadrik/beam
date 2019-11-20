@@ -139,6 +139,7 @@ if sys.platform == 'win32' and sys.maxsize <= 2**32:
   ]
 
 REQUIRED_TEST_PACKAGES = [
+    'attrs>=18.2.0',
     'mypy-extensions==0.4.3',
     'nose>=1.3.7',
     'nose_xunitmp>=0.4.1',

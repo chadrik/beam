@@ -44,6 +44,7 @@ ByteString  <-----> BYTES
 from __future__ import absolute_import
 
 import sys
+from collections import OrderedDict
 from typing import ByteString
 from typing import Dict
 from typing import Mapping
@@ -314,30 +315,34 @@ class NamedTupleSchemaConverter(SchemaConverter):
     return constructor
 
 
-@SchemaConverter.register
-class TypedDictSchemaConverter(SchemaConverter):
-  @classmethod
-  def claim_type(cls, type_):
-    return (isinstance(type_, type) and issubclass(type_, dict)
-            and type_ is not dict and hasattr(type_, '__annotations__'))
+if sys.version_info[:2] >= (3, 6):
+  # __annotations__ is a dict, and order is not stable for dict in
+  # python < 3.6. Order is very important for RowCoder to work reliably.
 
-  def get_fields(self):
-    return [
-        schema_pb2.Field(
-            name=name, type=typing_to_runner_api(field_type))
-        for name, field_type in self._type.__annotations__.items()]
+  @SchemaConverter.register
+  class TypedDictSchemaConverter(SchemaConverter):
+    @classmethod
+    def claim_type(cls, type_):
+      return (isinstance(type_, type) and issubclass(type_, dict)
+              and type_ is not dict and hasattr(type_, '__annotations__'))
 
-  def make_type(self, type_name):
-    import mypy_extensions
-    return mypy_extensions.TypedDict(
-        type_name,
-        [(field.name, typing_from_runner_api(field.type))
-         for field in self._schema.fields])
+    def get_fields(self):
+      return [
+          schema_pb2.Field(
+              name=name, type=typing_to_runner_api(field_type))
+          for name, field_type in self._type.__annotations__.items()]
 
-  def get_constructor(self):
-    def constructor(values):
-      return self._type(**values)
-    return constructor
+    def make_type(self, type_name):
+      import mypy_extensions
+      return mypy_extensions.TypedDict(
+          type_name,
+          [(field.name, typing_from_runner_api(field.type))
+           for field in self._schema.fields])
+
+    def get_constructor(self):
+      def constructor(values):
+        return self._type(**values)
+      return constructor
 
 
 if sys.version_info[:2] >= (3, 7):
@@ -366,6 +371,42 @@ if sys.version_info[:2] >= (3, 7):
         return self._type(**values)
 
       return constructor
+
+
+@SchemaConverter.register
+class AttrsConverter(SchemaConverter):
+  @classmethod
+  def claim_type(cls, type_):
+    attr = sys.modules.get('attr')
+    if attr:
+      try:
+        attr.fields(type_)
+      except (attr.exceptions.NotAnAttrsClassError, TypeError):
+        return False
+      else:
+        return True
+    return False
+
+  def get_fields(self):
+    import attr
+    return [
+        schema_pb2.Field(
+            name=field.name, type=typing_to_runner_api(field.type))
+        for field in attr.fields(self._type)]
+
+  def make_type(self, type_name):
+    import attr
+    return attr.make_class(
+        type_name,
+        OrderedDict(
+            [(field.name, attr.ib(type=typing_from_runner_api(field.type)))
+             for field in self._schema.fields]))
+
+  def get_constructor(self):
+    def constructor(values):
+      return self._type(**values)
+
+    return constructor
 
 
 def converter_from_schema(schema):
