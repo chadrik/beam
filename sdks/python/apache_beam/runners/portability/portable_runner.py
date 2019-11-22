@@ -76,15 +76,16 @@ class PortableJobServicePlan(object):
   """
 
   def __init__(self, job_service, options):
-    self._job_service = job_service
-    self._options = options
-    self._timeout = options.view_as(PortableOptions).job_server_timeout
+    self.job_service = job_service
+    self.options = options
+    self.timeout = options.view_as(PortableOptions).job_server_timeout
 
   def submit(self, proto_pipeline):
-    preparation_id, staging_endpoint, staging_token = self.prepare(
-        proto_pipeline)
-    retrieval_token = self.stage(staging_endpoint, staging_token)
-    return self.run(preparation_id, retrieval_token)
+    prepare_response = self.prepare(proto_pipeline)
+    retrieval_token = self.stage(
+        prepare_response.artifact_staging_endpoint.url,
+        prepare_response.staging_session_token)
+    return self.run(prepare_response.preparation_id, retrieval_token)
 
   def get_pipeline_options(self):
     # fetch runner options from job service
@@ -95,9 +96,9 @@ class PortableJobServicePlan(object):
         try:
           # This reports channel is READY but connections may fail
           # Seems to be only an issue on Mac with port forwardings
-          return self._job_service.DescribePipelineOptions(
+          return self.job_service.DescribePipelineOptions(
               beam_job_api_pb2.DescribePipelineOptionsRequest(),
-              timeout=self._timeout)
+              timeout=self.timeout)
         except grpc.FutureTimeoutError:
           # no retry for timeout errors
           raise
@@ -130,7 +131,7 @@ class PortableJobServicePlan(object):
             raise
           _LOGGER.debug("Runner option '%s' was already added" % option.name)
 
-    all_options = self._options.get_all_options(
+    all_options = self.options.get_all_options(
         add_extra_args_fn=add_runner_options)
     # TODO: Define URNs for options.
     # convert int values: https://issues.apache.org/jira/browse/BEAM-5509
@@ -141,14 +142,11 @@ class PortableJobServicePlan(object):
 
   def prepare(self, proto_pipeline):
     """Prepare the job on the job service"""
-    prepare_response = self._job_service.Prepare(
+    return self.job_service.Prepare(
         beam_job_api_pb2.PrepareJobRequest(
             job_name='job', pipeline=proto_pipeline,
             pipeline_options=self.get_pipeline_options()),
-        timeout=self._timeout)
-    return (prepare_response.preparation_id,
-            prepare_response.artifact_staging_endpoint.url,
-            prepare_response.staging_session_token)
+        timeout=self.timeout)
 
   def stage(self, artifact_staging_endpoint, staging_session_token):
     """Stage artifacts"""
@@ -157,7 +155,7 @@ class PortableJobServicePlan(object):
           grpc.insecure_channel(artifact_staging_endpoint),
           staging_session_token)
       retrieval_token, _ = stager.stage_job_resources(
-          self._options,
+          self.options,
           staging_location='')
     else:
       retrieval_token = None
@@ -167,19 +165,19 @@ class PortableJobServicePlan(object):
   def run(self, preparation_id, retrieval_token):
     """Run the job"""
     try:
-      state_stream = self._job_service.GetStateStream(
+      state_stream = self.job_service.GetStateStream(
           beam_job_api_pb2.GetJobStateRequest(
               job_id=preparation_id),
-          timeout=self._timeout)
+          timeout=self.timeout)
       # If there's an error, we don't always get it until we try to read.
       # Fortunately, there's always an immediate current state published.
       state_stream = itertools.chain(
           [next(state_stream)],
           state_stream)
-      message_stream = self._job_service.GetMessageStream(
+      message_stream = self.job_service.GetMessageStream(
           beam_job_api_pb2.JobMessagesRequest(
               job_id=preparation_id),
-          timeout=self._timeout)
+          timeout=self.timeout)
     except Exception:
       # TODO(BEAM-6442): Unify preparation_id and job_id for all runners.
       state_stream = message_stream = None
@@ -187,16 +185,16 @@ class PortableJobServicePlan(object):
     # Run the job and wait for a result, we don't set a timeout here because
     # it may take a long time for a job to complete and streaming
     # jobs currently never return a response.
-    run_response = self._job_service.Run(
+    run_response = self.job_service.Run(
         beam_job_api_pb2.RunJobRequest(
             preparation_id=preparation_id,
             retrieval_token=retrieval_token))
 
     if state_stream is None:
-      state_stream = self._job_service.GetStateStream(
+      state_stream = self.job_service.GetStateStream(
           beam_job_api_pb2.GetJobStateRequest(
               job_id=run_response.job_id))
-      message_stream = self._job_service.GetMessageStream(
+      message_stream = self.job_service.GetMessageStream(
           beam_job_api_pb2.JobMessagesRequest(
               job_id=run_response.job_id))
 
@@ -250,7 +248,7 @@ class PortableRunner(runner.PipelineRunner):
           job_server.DockerizedJobServer())
     return self._dockerized_job_server
 
-  def create_job_service(self, options):
+  def create_job_service_plan(self, options):
     job_endpoint = options.view_as(PortableOptions).job_endpoint
     if job_endpoint:
       if job_endpoint == 'embed':
@@ -347,11 +345,13 @@ class PortableRunner(runner.PipelineRunner):
       cleanup_callbacks = []
 
     proto_pipeline = self.get_proto_pipeline(pipeline, options)
-    job_service = self.create_job_service(options)
-    job_id, message_stream, state_stream = job_service.submit(proto_pipeline)
+    job_service_plan = self.create_job_service_plan(options)
+    job_id, message_stream, state_stream = \
+      job_service_plan.submit(proto_pipeline)
 
-    return PipelineResult(job_service._job_service, job_id, message_stream,
-                          state_stream, cleanup_callbacks)
+    return PipelineResult(
+        job_service_plan.job_service, job_id,
+        message_stream, state_stream, cleanup_callbacks)
 
 
 class PortableMetrics(metric.MetricResults):
@@ -385,7 +385,7 @@ class PipelineResult(runner.PipelineResult):
   def __init__(self, job_service, job_id, message_stream, state_stream,
                cleanup_callbacks=()):
     super(PipelineResult, self).__init__(beam_job_api_pb2.JobState.UNSPECIFIED)
-    self._job_service = job_service
+    self.job_service = job_service
     self._job_id = job_id
     self._messages = []
     self._message_stream = message_stream
@@ -395,14 +395,14 @@ class PipelineResult(runner.PipelineResult):
 
   def cancel(self):
     try:
-      self._job_service.Cancel(beam_job_api_pb2.CancelJobRequest(
+      self.job_service.Cancel(beam_job_api_pb2.CancelJobRequest(
           job_id=self._job_id))
     finally:
       self._cleanup()
 
   @property
   def state(self):
-    runner_api_state = self._job_service.GetState(
+    runner_api_state = self.job_service.GetState(
         beam_job_api_pb2.GetJobStateRequest(job_id=self._job_id)).state
     self._state = self._runner_api_state_to_pipeline_state(runner_api_state)
     return self._state
@@ -419,7 +419,7 @@ class PipelineResult(runner.PipelineResult):
   def metrics(self):
     if not self._metrics:
 
-      job_metrics_response = self._job_service.GetJobMetrics(
+      job_metrics_response = self.job_service.GetJobMetrics(
           beam_job_api_pb2.GetJobMetricsRequest(job_id=self._job_id))
 
       self._metrics = PortableMetrics(job_metrics_response)
