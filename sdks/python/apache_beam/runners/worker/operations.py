@@ -53,9 +53,9 @@ from apache_beam.transforms.window import GlobalWindows
 from apache_beam.utils.windowed_value import WindowedValue
 
 # Allow some "pure mode" declarations.
-try:
+if False:
   import cython
-except ImportError:
+else:
   class FakeCython(object):
     @staticmethod
     def cast(type, value):
