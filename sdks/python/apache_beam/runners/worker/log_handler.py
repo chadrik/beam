@@ -37,6 +37,7 @@ from apache_beam.portability.api import beam_fn_api_pb2_grpc
 from apache_beam.runners.worker import statesampler
 from apache_beam.runners.worker.channel_factory import GRPCChannelFactory
 from apache_beam.runners.worker.worker_id_interceptor import WorkerIdInterceptor
+from apache_beam.utils.sentinel import Sentinel
 
 # This module is experimental. No backwards-compatibility guarantees.
 
@@ -47,7 +48,7 @@ class FnApiLogRecordHandler(logging.Handler):
   # Maximum number of log entries in a single stream request.
   _MAX_BATCH_SIZE = 1000
   # Used to indicate the end of stream.
-  _FINISHED = object()
+  _FINISHED = Sentinel.sentinel
   # Size of the queue used to buffer messages. Once full, messages will be
   # dropped. If the average log size is 1KB this may use up to 10MB of memory.
   _QUEUE_SIZE = 10000
