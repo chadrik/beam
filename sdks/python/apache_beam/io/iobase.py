@@ -40,12 +40,15 @@ import random
 import uuid
 from builtins import object
 from builtins import range
-from collections import namedtuple
 from typing import TYPE_CHECKING
-from typing import Any
+from typing import Generic
 from typing import Iterator
+from typing import NamedTuple
 from typing import Optional
 from typing import Tuple
+from typing import TypeVar
+
+from typing_extensions import Protocol
 
 from apache_beam import coders
 from apache_beam import pvalue
@@ -80,6 +83,23 @@ __all__ = [
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class Position(Protocol):
+  def __lt__(self, other):
+    pass
+
+  def __le__(self, other):
+    pass
+
+  def __gt__(self, other):
+    pass
+
+  def __ge__(self, other):
+    pass
+
+
+PositionT = TypeVar('PositionT', bound='Position')
+
 # Encapsulates information about a bundle of a source generated when method
 # BoundedSource.split() is invoked.
 # This is a named 4-tuple that has following fields.
@@ -96,8 +116,11 @@ _LOGGER = logging.getLogger(__name__)
 #
 # Type for start and stop positions are specific to the bounded source and must
 # be consistent throughout.
-SourceBundle = namedtuple(
-    'SourceBundle', 'weight source start_position stop_position')
+SourceBundle = NamedTuple(
+    'SourceBundle',
+    [('weight', Optional[float]), ('source', 'BoundedSource'),
+     ('start_position', Optional[Position]),
+     ('stop_position', Optional[Position])])
 
 
 class SourceBase(HasDisplayData, urns.RunnerApiFn):
@@ -162,8 +185,8 @@ class BoundedSource(SourceBase):
 
   def split(self,
             desired_bundle_size,  # type: int
-            start_position=None,  # type: Optional[Any]
-            stop_position=None,  # type: Optional[Any]
+            start_position=None,  # type: Optional[PositionT]
+            stop_position=None,  # type: Optional[PositionT]
            ):
     # type: (...) -> Iterator[SourceBundle]
 
@@ -184,10 +207,10 @@ class BoundedSource(SourceBase):
     raise NotImplementedError
 
   def get_range_tracker(self,
-                        start_position,  # type: Optional[Any]
-                        stop_position,  # type: Optional[Any]
+                        start_position,  # type: Optional[PositionT]
+                        stop_position,  # type: Optional[PositionT]
                        ):
-    # type: (...) -> RangeTracker
+    # type: (...) -> RangeTracker[PositionT]
 
     """Returns a RangeTracker for a given position range.
 
@@ -245,7 +268,7 @@ class BoundedSource(SourceBase):
     return True
 
 
-class RangeTracker(object):
+class RangeTracker(Generic[PositionT]):
   """A thread safe object used by Dataflow source framework.
 
   A Dataflow source is defined using a ''BoundedSource'' and a ''RangeTracker''
@@ -361,14 +384,20 @@ class RangeTracker(object):
   SPLIT_POINTS_UNKNOWN = object()
 
   def start_position(self):
+    # type: () -> Optional[PositionT]
+
     """Returns the starting position of the current range, inclusive."""
     raise NotImplementedError(type(self))
 
   def stop_position(self):
+    # type: () -> Optional[PositionT]
+
     """Returns the ending position of the current range, exclusive."""
     raise NotImplementedError(type(self))
 
   def try_claim(self, position):  # pylint: disable=unused-argument
+    # type: (PositionT) -> bool
+
     """Atomically determines if a record at a split point is within the range.
 
     This method should be called **if and only if** the record is at a split
@@ -391,6 +420,8 @@ class RangeTracker(object):
     raise NotImplementedError
 
   def set_current_position(self, position):
+    # type: (PositionT) -> None
+
     """Updates the last-consumed position to the given position.
 
     A source may invoke this method for records that do not start at split
@@ -404,6 +435,8 @@ class RangeTracker(object):
     raise NotImplementedError
 
   def position_at_fraction(self, fraction):
+    # type: (float) -> Optional[PositionT]
+
     """Returns the position at the given fraction.
 
     Given a fraction within the range [0.0, 1.0) this method will return the
@@ -424,6 +457,8 @@ class RangeTracker(object):
     raise NotImplementedError
 
   def try_split(self, position):
+    # type: (PositionT) -> Optional[Tuple[PositionT, float]]
+
     """Atomically splits the current range.
 
     Determines a position to split the current range, split_position, based on
@@ -461,6 +496,8 @@ class RangeTracker(object):
     raise NotImplementedError
 
   def fraction_consumed(self):
+    # type: () -> float
+
     """Returns the approximate fraction of consumed positions in the source.
 
     ** Thread safety **
@@ -1371,6 +1408,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
   class _SDFBoundedSourceRestriction(object):
     """ A restriction wraps SourceBundle and RangeTracker. """
     def __init__(self, source_bundle, range_tracker=None):
+      # type: (SourceBundle, Optional[RangeTracker]) -> None
       self._source_bundle = source_bundle
       self._range_tracker = range_tracker
 
@@ -1379,6 +1417,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
       return (self.__class__, (self._source_bundle, ))
 
     def range_tracker(self):
+      # type: () -> RangeTracker
       if not self._range_tracker:
         self._range_tracker = self._source_bundle.source.get_range_tracker(
             self._source_bundle.start_position,
@@ -1428,6 +1467,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
     Delegated RangeTracker guarantees synchronization safety.
     """
     def __init__(self, restriction):
+      # type: (_SDFBoundedSourceWrapper._SDFBoundedSourceRestriction) -> None
       if not isinstance(restriction,
                         _SDFBoundedSourceWrapper._SDFBoundedSourceRestriction):
         raise ValueError(
@@ -1441,6 +1481,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
           fraction=self.restriction.range_tracker().fraction_consumed())
 
     def current_restriction(self):
+      # type: () -> _SDFBoundedSourceWrapper._SDFBoundedSourceRestriction
       self.restriction.range_tracker()
       return self.restriction
 
@@ -1457,6 +1498,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
       return self.restriction.try_split(fraction_of_remainder)
 
     def check_done(self):
+      # type: () -> bool
       return self.restriction.range_tracker().fraction_consumed() >= 1.0
 
     def is_bounded(self):
@@ -1465,10 +1507,12 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
   class _SDFBoundedSourceRestrictionProvider(core.RestrictionProvider):
     """A `RestrictionProvider` that is used by SDF for `BoundedSource`."""
     def __init__(self, source, desired_chunk_size=None):
+      # type: (BoundedSource, Optional[int]) -> None
       self._source = source
       self._desired_chunk_size = desired_chunk_size
 
     def initial_restriction(self, element):
+      # type: (...) -> _SDFBoundedSourceWrapper._SDFBoundedSourceRestriction
       # Get initial range_tracker from source
       range_tracker = self._source.get_range_tracker(None, None)
       return _SDFBoundedSourceWrapper._SDFBoundedSourceRestriction(
@@ -1479,6 +1523,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
               range_tracker.stop_position()))
 
     def create_tracker(self, restriction):
+      # type: (...) -> _SDFBoundedSourceWrapper._SDFBoundedSourceRestrictionTracker
       return _SDFBoundedSourceWrapper._SDFBoundedSourceRestrictionTracker(
           restriction)
 
@@ -1503,6 +1548,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
       return coders.DillCoder()
 
   def __init__(self, source):
+    # type: (BoundedSource) -> None
     if not isinstance(source, BoundedSource):
       raise RuntimeError('SDFBoundedSourceWrapper can only wrap BoundedSource')
     super(_SDFBoundedSourceWrapper, self).__init__()
@@ -1513,6 +1559,7 @@ class _SDFBoundedSourceWrapper(ptransform.PTransform):
 
     class SDFBoundedSourceDoFn(core.DoFn):
       def __init__(self, read_source):
+        # type: (BoundedSource) -> None
         self.source = read_source
 
       def display_data(self):

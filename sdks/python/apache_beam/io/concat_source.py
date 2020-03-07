@@ -27,6 +27,8 @@ from __future__ import division
 import bisect
 import threading
 from builtins import range
+from typing import Optional
+from typing import Tuple
 
 from apache_beam.io import iobase
 
@@ -98,11 +100,17 @@ class ConcatSource(iobase.BoundedSource):
       return super(ConcatSource, self).default_output_coder()
 
 
-class ConcatRangeTracker(iobase.RangeTracker):
+class ConcatRangeTracker(iobase.RangeTracker[Tuple[int, Optional[int]]]):
   """For internal use only; no backwards-compatibility guarantees.
 
   Range tracker for ConcatSource"""
-  def __init__(self, start, end, source_bundles):
+  def __init__(self,
+               start,  # type: Tuple[int, Optional[int]]
+               end,  # type: Tuple[int, Optional[int]]
+               source_bundles
+              ):
+    # type: (...) -> None
+
     """Initializes ``ConcatRangeTracker``
 
     Args:
@@ -163,12 +171,15 @@ class ConcatRangeTracker(iobase.RangeTracker):
     return running_total
 
   def start_position(self):
+    # type: () -> Tuple[int, Optional[int]]
     return self._start
 
   def stop_position(self):
+    # type: () -> Tuple[int, Optional[int]]
     return self._end
 
   def try_claim(self, pos):
+    # type: (Tuple[int, Optional[int]]) -> bool
     source_ix, source_pos = pos
     with self._lock:
       if source_ix > self._end[0]:
@@ -184,6 +195,7 @@ class ConcatRangeTracker(iobase.RangeTracker):
           return self.sub_range_tracker(source_ix).try_claim(source_pos)
 
   def try_split(self, pos):
+    # type: (Tuple[int, Optional[int]]) -> Optional[Tuple[Tuple[int, Optional[int]], float]]
     source_ix, source_pos = pos
     with self._lock:
       if source_ix < self._claimed_source_ix:
@@ -218,6 +230,7 @@ class ConcatRangeTracker(iobase.RangeTracker):
     raise NotImplementedError('Should only be called on sub-trackers')
 
   def position_at_fraction(self, fraction):
+    # type: (float) -> Tuple[int, Optional[int]]
     source_ix, source_frac = self.global_to_local(fraction)
     last = self._end[0] if self._end[1] is None else self._end[0] + 1
     if source_ix == last:
@@ -228,6 +241,7 @@ class ConcatRangeTracker(iobase.RangeTracker):
           self.sub_range_tracker(source_ix).position_at_fraction(source_frac))
 
   def fraction_consumed(self):
+    # type: () -> float
     with self._lock:
       return self.local_to_global(
           self._claimed_source_ix,
