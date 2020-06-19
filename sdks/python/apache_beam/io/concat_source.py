@@ -27,11 +27,16 @@ from __future__ import division
 import bisect
 import threading
 from builtins import range
+from typing import Iterable
+from typing import TypeVar
+from typing import Union
 
 from apache_beam.io import iobase
 
+T = TypeVar('T')
 
-class ConcatSource(iobase.BoundedSource):
+
+class ConcatSource(iobase.BoundedSource[T]):
   """For internal use only; no backwards-compatibility guarantees.
 
   A ``BoundedSource`` that can group a set of ``BoundedSources``.
@@ -40,6 +45,7 @@ class ConcatSource(iobase.BoundedSource):
   to create the union of several reads.
   """
   def __init__(self, sources):
+    # type: (Iterable[Union[iobase.SourceBundle, iobase.BoundedSource[T]]]) -> None
     self._source_bundles = [
         source if isinstance(source, iobase.SourceBundle) else
         iobase.SourceBundle(None, source, None, None) for source in sources

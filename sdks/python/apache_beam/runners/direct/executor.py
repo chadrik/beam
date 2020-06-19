@@ -33,8 +33,10 @@ from typing import TYPE_CHECKING
 from typing import Any
 from typing import Dict
 from typing import FrozenSet
+from typing import Generic
 from typing import Optional
 from typing import Set
+from typing import TypeVar
 from weakref import WeakValueDictionary
 
 from future.moves import queue
@@ -52,6 +54,8 @@ if TYPE_CHECKING:
   from apache_beam.runners.direct.transform_evaluator import TransformEvaluatorRegistry
 
 _LOGGER = logging.getLogger(__name__)
+
+T = TypeVar('T')
 
 
 class _ExecutorService(object):
@@ -533,13 +537,15 @@ class _ExecutorServiceParallelExecutor(object):
         transform_executor_service)
     transform_executor_service.schedule(transform_executor)
 
-  class _TypedUpdateQueue(object):
+  class _TypedUpdateQueue(Generic[T]):
     """Type checking update queue with blocking and non-blocking operations."""
     def __init__(self, item_type):
+      # type: (Type[T]) -> None
       self._item_type = item_type
-      self._queue = queue.Queue()
+      self._queue = queue.Queue()  # type: queue.Queue[T]
 
     def poll(self):
+      # type: () -> Optional[T]
       try:
         item = self._queue.get_nowait()
         self._queue.task_done()
@@ -548,6 +554,7 @@ class _ExecutorServiceParallelExecutor(object):
         return None
 
     def take(self):
+      # type: () -> T
       # The implementation of Queue.Queue.get() does not propagate
       # KeyboardInterrupts when a timeout is not used.  We therefore use a
       # one-second timeout in the following loop to allow KeyboardInterrupts
@@ -561,6 +568,7 @@ class _ExecutorServiceParallelExecutor(object):
           pass
 
     def offer(self, item):
+      # type: (T) -> None
       assert isinstance(item, self._item_type)
       self._queue.put_nowait(item)
 

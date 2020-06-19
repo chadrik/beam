@@ -99,6 +99,8 @@ K = TypeVar('K')
 V = TypeVar('V')
 T = TypeVar('T')
 
+InT = TypeVar('InT')
+OutT = TypeVar('OutT')
 
 class CoGroupByKey(PTransform):
   """Groups results across several PCollections by key.
@@ -536,7 +538,7 @@ class _WindowAwareBatchingDoFn(DoFn):
 
 @typehints.with_input_types(T)
 @typehints.with_output_types(List[T])
-class BatchElements(PTransform):
+class BatchElements(PTransform[T, List[T]]):
   """A Transform that batches elements for amortized processing.
 
   This transform is designed to precede operations whose processing cost
@@ -629,7 +631,7 @@ class _IdentityWindowFn(NonMergingWindowFn):
 
 @typehints.with_input_types(Tuple[K, V])
 @typehints.with_output_types(Tuple[K, V])
-class ReshufflePerKey(PTransform):
+class ReshufflePerKey(PTransform[Tuple[K, V], Tuple[K, V]]):
   """PTransform that returns a PCollection equivalent to its input,
   but operationally provides some of the side effects of a GroupByKey,
   in particular preventing fusion of the surrounding transforms,
@@ -691,7 +693,7 @@ class ReshufflePerKey(PTransform):
 
 @typehints.with_input_types(T)
 @typehints.with_output_types(T)
-class Reshuffle(PTransform):
+class Reshuffle(PTransform[T, T]):
   """PTransform that returns a PCollection equivalent to its input,
   but operationally provides some of the side effects of a GroupByKey,
   in particular preventing fusion of the surrounding transforms,
@@ -740,7 +742,7 @@ def WithKeys(pcoll, k):
 
 @experimental()
 @typehints.with_input_types(Tuple[K, V])
-class GroupIntoBatches(PTransform):
+class GroupIntoBatches(PTransform[Tuple[K, V], Any]):
   """PTransform that batches the input into desired batch size. Elements are
   buffered until they are equal to batch size provided in the argument at which
   point they are output to the output Pcollection.
@@ -865,7 +867,7 @@ class Reify(object):
   Beam values."""
   @typehints.with_input_types(T)
   @typehints.with_output_types(T)
-  class Timestamp(PTransform):
+  class Timestamp(PTransform[T, T]):
     """PTransform to wrap a value in a TimestampedValue with it's
     associated timestamp."""
     @staticmethod
@@ -877,7 +879,7 @@ class Reify(object):
 
   @typehints.with_input_types(T)
   @typehints.with_output_types(T)
-  class Window(PTransform):
+  class Window(PTransform[T, T]):
     """PTransform to convert an element in a PCollection into a tuple of
     (element, timestamp, window), wrapped in a TimestampedValue with it's
     associated timestamp."""
@@ -891,7 +893,7 @@ class Reify(object):
 
   @typehints.with_input_types(Tuple[K, V])
   @typehints.with_output_types(Tuple[K, V])
-  class TimestampInValue(PTransform):
+  class TimestampInValue(PTransform[Tuple[K, V], Tuple[K, V]]):
     """PTransform to wrap the Value in a KV pair in a TimestampedValue with
     the element's associated timestamp."""
     @staticmethod
@@ -904,7 +906,7 @@ class Reify(object):
 
   @typehints.with_input_types(Tuple[K, V])
   @typehints.with_output_types(Tuple[K, V])
-  class WindowInValue(PTransform):
+  class WindowInValue(PTransform[Tuple[K, V], Tuple[K, V]]):
     """PTransform to convert the Value in a KV pair into a tuple of
     (value, timestamp, window), with the whole element being wrapped inside a
     TimestampedValue."""

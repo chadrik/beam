@@ -22,6 +22,7 @@
 from __future__ import absolute_import
 
 import logging
+import typing
 from builtins import object
 from builtins import range
 from functools import partial
@@ -29,6 +30,7 @@ from typing import Optional
 
 from past.builtins import long
 
+from apache_beam import pvalue
 from apache_beam.coders import coders
 from apache_beam.io import filebasedsink
 from apache_beam.io import filebasedsource
@@ -39,6 +41,7 @@ from apache_beam.io.iobase import Read
 from apache_beam.io.iobase import Write
 from apache_beam.transforms import PTransform
 from apache_beam.transforms.display import DisplayDataItem
+
 
 __all__ = [
     'ReadFromText',
@@ -502,7 +505,7 @@ class ReadAllFromText(PTransform):
     return pvalue | 'ReadAllFiles' >> self._read_all_files
 
 
-class ReadFromText(PTransform):
+class ReadFromText(PTransform[pvalue.PBeginType, str]):
   r"""A :class:`~apache_beam.transforms.ptransform.PTransform` for reading text
   files.
 
@@ -575,7 +578,7 @@ class ReadFromTextWithFilename(ReadFromText):
   _source_class = _TextSourceWithFilename
 
 
-class WriteToText(PTransform):
+class WriteToText(PTransform[str, pvalue.PDoneType]):
   """A :class:`~apache_beam.transforms.ptransform.PTransform` for writing to
   text files."""
 

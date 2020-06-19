@@ -56,7 +56,7 @@ MAX_NUM_THREADS_FOR_SIZE_ESTIMATION = 25
 __all__ = ['FileBasedSource']
 
 
-class FileBasedSource(iobase.BoundedSource):
+class FileBasedSource(iobase.BoundedSource[str]):
   """A :class:`~apache_beam.io.iobase.BoundedSource` for reading a file glob of
   a given type."""
 

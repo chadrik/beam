@@ -74,6 +74,8 @@ from apache_beam.typehints import native_type_compatibility
 from apache_beam.typehints import typehints
 from apache_beam.typehints.decorators import TypeCheckError
 from apache_beam.typehints.decorators import WithTypeHints
+from apache_beam.typehints.decorators import InT
+from apache_beam.typehints.decorators import OutT
 from apache_beam.typehints.decorators import get_signature
 from apache_beam.typehints.decorators import getcallargs_forhints
 from apache_beam.typehints.trivial_inference import instance_to_type
@@ -96,6 +98,7 @@ __all__ = [
 T = TypeVar('T')
 PTransformT = TypeVar('PTransformT', bound='PTransform')
 ConstructorFn = Callable[[Optional[Any], 'PipelineContext'], Any]
+PValueT = TypeVar('PValueT', bound=pvalue.PValue)
 
 
 class _PValueishTransform(object):
@@ -316,7 +319,7 @@ class _ZipPValues(object):
         self.visit(p, sibling, pairs, context)
 
 
-class PTransform(WithTypeHints, HasDisplayData):
+class PTransform(WithTypeHints[InT, OutT], HasDisplayData):
   """A transform object used to modify one or more PCollections.
 
   Subclasses must define an expand() method that will be used when the transform
@@ -380,11 +383,13 @@ class PTransform(WithTypeHints, HasDisplayData):
         input_type_hint, 'Type hints for a PTransform')
     return super(PTransform, self).with_input_types(input_type_hint)
 
-  def with_output_types(self, type_hint):
+  # Note: this signature is required for type inspection (see Liskov Substitution Principle)
+  def with_output_types(self, *output_type_hints, **unused_kwargs):
+    # type: (PTransformT, *Any, **Any) -> PTransformT
     """Annotates the output type of a :class:`PTransform` with a type-hint.
 
     Args:
-      type_hint (type): An instance of an allowed built-in type, a custom class,
+      output_type_hints (type): An instance of an allowed built-in type, a custom class,
         or a :class:`~apache_beam.typehints.typehints.TypeConstraint`.
 
     Raises:
@@ -397,9 +402,19 @@ class PTransform(WithTypeHints, HasDisplayData):
       :class:`PTransform` object. This allows chaining type-hinting related
       methods.
     """
-    type_hint = native_type_compatibility.convert_to_beam_type(type_hint)
-    validate_composite_type_param(type_hint, 'Type hints for a PTransform')
-    return super(PTransform, self).with_output_types(type_hint)
+    if len(output_type_hints) != 1:
+      raise TypeCheckError(
+          'PTransform %s expects a single output type hint. Got %d)' % (
+              self.__class__, len(output_type_hints)))
+    if unused_kwargs:
+      raise TypeCheckError(
+          'PTransform %s does not take any keyword type hints. Got %s)' % (
+              self.__class__, unused_kwargs))
+    output_type_hint = native_type_compatibility.convert_to_beam_type(
+        output_type_hints[0])
+    validate_composite_type_param(output_type_hint,
+                                  'Type hints for a PTransform')
+    return super(PTransform, self).with_output_types(output_type_hint)
 
   def type_check_inputs(self, pvalueish):
     self.type_check_inputs_or_outputs(pvalueish, 'input')
@@ -466,6 +481,7 @@ class PTransform(WithTypeHints, HasDisplayData):
     return transform
 
   def expand(self, input_or_inputs):
+    # type: (pvalue.PCollection[InT]) -> pvalue.PCollection[OutT]
     raise NotImplementedError
 
   def __str__(self):
@@ -502,15 +518,18 @@ class PTransform(WithTypeHints, HasDisplayData):
     return inputs[0].windowing
 
   def __rrshift__(self, label):
+    # type: (str) -> _NamedPTransform[InT, OutT]
     return _NamedPTransform(self, label)
 
   def __or__(self, right):
+    # type: (PTransform[InT, OutT], PTransform[OutT, T]) -> _ChainedPTransform[OutT, T]
     """Used to compose PTransforms, e.g., ptransform1 | ptransform2."""
     if isinstance(right, PTransform):
       return _ChainedPTransform(self, right)
     return NotImplemented
 
   def __ror__(self, left, label=None):
+    # type: (Any, Optional[str]) -> pvalue.PCollection[OutT]
     """Used to apply this PTransform to non-PValues, e.g., a tuple."""
     pvalueish, pvalues = self._extract_input_pvalues(left)
     pipelines = [v.pipeline for v in pvalues if isinstance(v, pvalue.PValue)]
@@ -555,6 +574,16 @@ class PTransform(WithTypeHints, HasDisplayData):
     p.run().wait_until_finish()
     _release_materialized_pipeline(p)
     return _FinalizeMaterialization().visit(materialized_result)
+
+  @typing.overload
+  def _extract_input_pvalues(self, pvalueish):
+    # type: (Pipeline) -> Tuple[pvalue.PBegin, Tuple]
+    pass
+
+  @typing.overload
+  def _extract_input_pvalues(self, pvalueish):
+    # type: (PValueT) -> Tuple[PValueT, Tuple]
+    pass
 
   def _extract_input_pvalues(self, pvalueish):
     """Extract all the pvalues contained in the input pvalueish.
@@ -715,7 +744,7 @@ def _unpickle_transform(pickled_bytes, unused_context):
   return pickler.loads(pickled_bytes)
 
 
-class _ChainedPTransform(PTransform):
+class _ChainedPTransform(PTransform[InT, OutT]):
   def __init__(self, *parts):
     # type: (*PTransform) -> None
     super(_ChainedPTransform, self).__init__(label=self._chain_label(parts))
@@ -735,7 +764,7 @@ class _ChainedPTransform(PTransform):
     return reduce(operator.or_, self._parts, pval)
 
 
-class PTransformWithSideInputs(PTransform):
+class PTransformWithSideInputs(PTransform[InT, OutT]):
   """A superclass for any :class:`PTransform` (e.g.
   :func:`~apache_beam.transforms.core.FlatMap` or
   :class:`~apache_beam.transforms.core.CombineFn`)
@@ -968,12 +997,14 @@ def label_from_callable(fn):
   return str(fn)
 
 
-class _NamedPTransform(PTransform):
+class _NamedPTransform(PTransform[InT, OutT]):
   def __init__(self, transform, label):
+    # type: (PTransform[InT, OutT], str) -> None
     super(_NamedPTransform, self).__init__(label)
     self.transform = transform
 
   def __ror__(self, pvalueish, _unused=None):
+    # type: (Any, Optional[str]) -> pvalue.PCollection[OutT]
     return self.transform.__ror__(pvalueish, self.label)
 
   def expand(self, pvalue):
