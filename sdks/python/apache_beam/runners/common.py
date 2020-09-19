@@ -64,6 +64,7 @@ from apache_beam.transforms.window import TimestampedValue
 from apache_beam.transforms.window import WindowFn
 from apache_beam.utils.counters import Counter
 from apache_beam.utils.counters import CounterName
+from apache_beam.utils.sentinel import Sentinel
 from apache_beam.utils.timestamp import Timestamp
 from apache_beam.utils.windowed_value import WindowedValue
 
@@ -1418,7 +1419,7 @@ class _OutputProcessor(OutputProcessor):
 
 class _NoContext(WindowFn.AssignContext):
   """An uninspectable WindowFn.AssignContext."""
-  NO_VALUE = object()
+  NO_VALUE = Sentinel.sentinel
 
   def __init__(self, value, timestamp=NO_VALUE):
     self.value = value

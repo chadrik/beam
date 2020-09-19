@@ -26,6 +26,7 @@ from apache_beam.transforms import userstate
 from apache_beam.transforms.trigger import _ListStateTag
 from apache_beam.transforms.trigger import _ReadModifyWriteStateTag
 from apache_beam.transforms.trigger import _SetStateTag
+from apache_beam.utils.sentinel import Sentinel
 
 
 class DirectRuntimeState(userstate.RuntimeState):
@@ -57,7 +58,7 @@ class DirectRuntimeState(userstate.RuntimeState):
 
 
 # Sentinel designating an unread value.
-UNREAD_VALUE = object()
+UNREAD_VALUE = Sentinel.sentinel
 
 
 class ReadModifyWriteRuntimeState(DirectRuntimeState,

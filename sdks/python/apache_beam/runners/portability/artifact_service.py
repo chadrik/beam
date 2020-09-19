@@ -53,6 +53,7 @@ from apache_beam.portability.api import beam_artifact_api_pb2
 from apache_beam.portability.api import beam_artifact_api_pb2_grpc
 from apache_beam.portability.api import beam_runner_api_pb2
 from apache_beam.utils import proto_utils
+from apache_beam.utils.sentinel import Sentinel
 
 if typing.TYPE_CHECKING:
   from typing import BinaryIO  # pylint: disable=ungrouped-imports

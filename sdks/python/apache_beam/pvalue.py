@@ -50,6 +50,7 @@ from apache_beam.internal import pickler
 from apache_beam.portability import common_urns
 from apache_beam.portability import python_urns
 from apache_beam.portability.api import beam_runner_api_pb2
+from apache_beam.utils.sentinel import Sentinel
 
 if TYPE_CHECKING:
   from apache_beam.transforms import sideinputs
@@ -496,7 +497,7 @@ class AsSingleton(AsSideInput):
   The input PCollection must contain exactly one value per window, unless a
   default is given, in which case it may be empty.
   """
-  _NO_DEFAULT = object()
+  _NO_DEFAULT = Sentinel.sentinel
 
   def __init__(self, pcoll, default_value=_NO_DEFAULT):
     # type: (PCollection, Any) -> None

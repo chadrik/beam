@@ -250,7 +250,7 @@ class OrderedPositionRangeTracker(iobase.RangeTracker[iobase.PositionT]):
   to and from the closed interval [0, 1].
   """
 
-  UNSTARTED = object()
+  UNSTARTED = Sentinel.sentinel
 
   def __init__(self, start_position=None, stop_position=None):
     # type: (Optional[iobase.PositionT], Optional[iobase.PositionT]) -> None

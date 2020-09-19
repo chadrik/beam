@@ -25,6 +25,10 @@ import enum
 class Sentinel(enum.Enum):
   """
   A type-safe sentinel class
+
+  Note that this is a singleton sentinel object, so it should not be used
+  for two different sentinel values in the same context.  In this case, create
+  a new Enum dedicated for that purpose.
   """
 
   sentinel = object()

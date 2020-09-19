@@ -21,7 +21,9 @@ from __future__ import absolute_import
 from future.utils import iteritems
 from hamcrest.core.base_matcher import BaseMatcher
 
-IGNORED = object()
+from apache_beam.utils.sentinel import Sentinel
+
+IGNORED = Sentinel.sentinel
 
 
 class MetricStructuredNameMatcher(BaseMatcher):
