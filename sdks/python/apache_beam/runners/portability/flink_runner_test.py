@@ -29,6 +29,7 @@ from os import path
 from os.path import exists
 from shutil import rmtree
 from tempfile import mkdtemp
+from typing import Optional
 
 from past.builtins import unicode
 
@@ -104,8 +105,8 @@ if __name__ == '__main__':
     _use_grpc = True
     _use_subprocesses = True
 
-    conf_dir = None
-    expansion_port = None
+    conf_dir = None  # type: Optional[str]
+    expansion_port = None  # type: Optional[int]
 
     @classmethod
     def tearDownClass(cls):

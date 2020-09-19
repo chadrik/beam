@@ -83,17 +83,24 @@ class Buffer(Protocol):
 
 
 class PartitionableBuffer(Buffer, Protocol):
+  cleared = True  # type: bool
+
   def partition(self, n):
     # type: (int) -> List[List[bytes]]
+    pass
+
+  def clear(self):
+    # type: () -> None
     pass
 
 
 class ListBuffer(object):
   """Used to support parititioning of a list."""
   def __init__(self, coder_impl):
+    # type: (CoderImpl) -> None
     self._coder_impl = coder_impl
     self._inputs = []  # type: List[bytes]
-    self._grouped_output = None
+    self._grouped_output = None  # type: Optional[List[List[bytes]]]
     self.cleared = False
 
   def append(self, element):
@@ -232,7 +239,7 @@ class WindowGroupingBuffer(object):
   """Used to partition windowed side inputs."""
   def __init__(
       self,
-      access_pattern,
+      access_pattern,  # type: beam_runner_api_pb2.FunctionSpec
       coder  # type: WindowedValueCoder
   ):
     # type: (...) -> None

@@ -278,7 +278,7 @@ def parse_string_payload(input_byte):
   return RowCoder(payload.schema).decode(payload.payload)._asdict()
 
 
-server = None
+server = None  # type: ignore[var-annotated]
 
 
 def cleanup(unused_signum, unused_frame):

@@ -74,7 +74,8 @@ from apache_beam.utils import urns
 from apache_beam.utils.timestamp import Duration
 
 if typing.TYPE_CHECKING:
-  from apache_beam.io import iobase  # pylint: disable=ungrouped-imports
+  from google.protobuf import message  # pylint: disable=ungrouped-imports
+  from apache_beam.io import iobase
   from apache_beam.pipeline import Pipeline
   from apache_beam.runners.pipeline_context import PipelineContext
   from apache_beam.transforms import create_source
@@ -1388,7 +1389,7 @@ class ParDo(PTransformWithSideInputs):
     return key_coder, window_coder
 
   def to_runner_api_parameter(self, context, **extra_kwargs):
-    # type: (PipelineContext, Any) -> typing.Tuple[str, message.Message]
+    # type: (PipelineContext, **typing.Any) -> typing.Tuple[str, message.Message]
     assert isinstance(self, ParDo), \
         "expected instance of ParDo, but got %s" % self.__class__
     state_specs, timer_specs = userstate.get_dofn_specs(self.fn)
@@ -1900,7 +1901,7 @@ class CombineGlobally(PTransform):
   """
   has_defaults = True
   as_view = False
-  fanout = None
+  fanout = None  # type: typing.Optional[int]
 
   def __init__(self, fn, *args, **kwargs):
     if not (isinstance(fn, CombineFn) or callable(fn)):
@@ -2796,7 +2797,7 @@ class WindowInto(ParDo):
     return super(WindowInto, self).expand(pcoll)
 
   def to_runner_api_parameter(self, context, **extra_kwargs):
-    # type: (PipelineContext, Any) -> typing.Tuple[str, message.Message]
+    # type: (PipelineContext, **typing.Any) -> typing.Tuple[str, message.Message]
     return (
         common_urns.primitives.ASSIGN_WINDOWS.urn,
         self.windowing.to_runner_api(context))

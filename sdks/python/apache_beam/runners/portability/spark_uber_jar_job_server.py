@@ -41,7 +41,8 @@ from apache_beam.utils.timestamp import Timestamp
 _LOGGER = logging.getLogger(__name__)
 
 
-class SparkUberJarJobServer(abstract_job_service.AbstractJobServiceServicer):
+class SparkUberJarJobServer(
+    abstract_job_service.AbstractJobServiceServicer['SparkBeamJob']):
   """A Job server which submits a self-contained Jar to a Spark cluster.
 
   The jar contains the Beam pipeline definition, dependencies, and
@@ -81,6 +82,7 @@ class SparkUberJarJobServer(abstract_job_service.AbstractJobServiceServicer):
     return job_server.JavaJarJobServer.local_jar(url)
 
   def create_beam_job(self, job_id, job_name, pipeline, options):
+    # type: (...) -> SparkBeamJob
     return SparkBeamJob(
         self._rest_url,
         self.executable_jar(),
@@ -182,6 +184,7 @@ class SparkBeamJob(abstract_job_service.UberJarBeamJob):
     }
 
   def run(self):
+    # type: () -> None
     self._stop_artifact_service()
 
     # Upload the jar and start the job.
@@ -192,6 +195,7 @@ class SparkBeamJob(abstract_job_service.UberJarBeamJob):
     _LOGGER.info('Submitted Spark job with ID %s' % self._spark_submission_id)
 
   def cancel(self):
+    # type: () -> None
     self.post('v1/submissions/kill/%s' % self._spark_submission_id)
 
   @staticmethod
@@ -211,6 +215,7 @@ class SparkBeamJob(abstract_job_service.UberJarBeamJob):
     return self.get('v1/submissions/status/%s' % self._spark_submission_id)
 
   def get_state(self):
+    # type: () -> abstract_job_service.StateEvent
     response = self._get_spark_status()
     state = self._get_beam_state(response)
     timestamp = self.set_state(state)
@@ -258,6 +263,7 @@ class SparkBeamJob(abstract_job_service.UberJarBeamJob):
       time.sleep(sleep_secs)
 
   def get_state_stream(self):
+    # type: () -> abstract_job_service.StateStream
     for msg in self._with_message_history(self._get_message_iter()):
       if isinstance(msg, tuple):
         state, timestamp = msg
@@ -266,6 +272,7 @@ class SparkBeamJob(abstract_job_service.UberJarBeamJob):
           break
 
   def get_message_stream(self):
+    # type: () -> abstract_job_service.MessageStream
     for msg in self._with_message_history(self._get_message_iter()):
       yield msg
       if isinstance(msg, tuple):

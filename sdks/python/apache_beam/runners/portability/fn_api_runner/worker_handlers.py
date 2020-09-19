@@ -90,6 +90,7 @@ class ControlConnection(object):
   _lock = threading.Lock()
 
   def __init__(self):
+    # type: () -> None
     self._push_queue = queue.Queue(
     )  # type: queue.Queue[beam_fn_api_pb2.InstructionRequest]
     self._input = None  # type: Optional[Iterable[beam_fn_api_pb2.InstructionResponse]]
@@ -99,6 +100,7 @@ class ControlConnection(object):
     self._state = BeamFnControlServicer.UNSTARTED_STATE
 
   def _read(self):
+    # type: () -> None
     for data in self._input:
       self._futures_by_id.pop(data.instruction_id).set(data)
 
@@ -173,8 +175,8 @@ class BeamFnControlServicer(beam_fn_api_pb2_grpc.BeamFnControlServicer):
     self._state = self.UNSTARTED_STATE
     # following self._req_* variables are used for debugging purpose, data is
     # added only when self._log_req is True.
-    self._req_sent = collections.defaultdict(int)
-    self._req_worker_mapping = {}
+    self._req_sent = collections.defaultdict(int)  # type: DefaultDict[str, int]
+    self._req_worker_mapping = {}  # type: Dict[str, str]
     self._log_req = logging.getLogger().getEffectiveLevel() <= logging.DEBUG
     self._connections_by_worker_id = collections.defaultdict(
         ControlConnection)  # type: DefaultDict[str, ControlConnection]
@@ -213,6 +215,7 @@ class BeamFnControlServicer(beam_fn_api_pb2_grpc.BeamFnControlServicer):
         self._req_sent[to_push.instruction_id] += 1
 
   def done(self):
+    # type: () -> None
     self._state = self.DONE_STATE
     _LOGGER.debug(
         'Runner: Requests sent by runner: %s',
@@ -276,6 +279,14 @@ class WorkerHandler(object):
 
   def stop_worker(self):
     # type: () -> None
+    raise NotImplementedError
+
+  def control_api_service_descriptor(self):
+    # type: () -> endpoints_pb2.ApiServiceDescriptor
+    raise NotImplementedError
+
+  def artifact_api_service_descriptor(self):
+    # type: () -> endpoints_pb2.ApiServiceDescriptor
     raise NotImplementedError
 
   def data_api_service_descriptor(self):
@@ -403,7 +414,7 @@ class BasicLoggingService(beam_fn_api_pb2_grpc.BeamFnLoggingServicer):
 class BasicProvisionService(beam_provision_api_pb2_grpc.ProvisionServiceServicer
                             ):
   def __init__(self, base_info, worker_manager):
-    # type: (Optional[beam_provision_api_pb2.ProvisionInfo], WorkerHandlerManager) -> None
+    # type: (beam_provision_api_pb2.ProvisionInfo, WorkerHandlerManager) -> None
     self._base_info = base_info
     self._worker_manager = worker_manager
 
@@ -499,6 +510,7 @@ class GrpcServer(object):
     self.control_server.start()
 
   def close(self):
+    # type: () -> None
     self.control_handler.done()
     to_wait = [
         self.control_server.stop(self._DEFAULT_SHUTDOWN_TIMEOUT_SECS),
@@ -610,6 +622,7 @@ class ExternalWorkerHandler(GrpcWorkerHandler):
     pass
 
   def host_from_worker(self):
+    # type: () -> str
     # TODO(BEAM-8646): Reconcile across platforms.
     if sys.platform in ['win32', 'darwin']:
       return 'localhost'
@@ -852,6 +865,7 @@ class WorkerHandlerManager(object):
     return self._cached_handlers[environment_id][:num_workers]
 
   def close_all(self):
+    # type: () -> None
     for worker_handler_list in self._cached_handlers.values():
       for worker_handler in set(worker_handler_list):
         try:
@@ -866,6 +880,7 @@ class WorkerHandlerManager(object):
       self._grpc_server = None
 
   def get_worker(self, worker_id):
+    # type: (str) -> WorkerHandler
     return self._workers_by_id[worker_id]
 
 

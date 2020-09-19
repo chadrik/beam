@@ -36,6 +36,8 @@ from builtins import object
 from typing import TYPE_CHECKING
 from typing import Callable
 from typing import Dict
+from typing import Generator
+from typing import Iterable
 from typing import List
 from typing import Mapping
 from typing import MutableMapping
@@ -79,6 +81,11 @@ DataSideInput = Dict[Tuple[str, str],
 DataOutput = Dict[str, bytes]
 BundleProcessResult = Tuple[beam_fn_api_pb2.InstructionResponse,
                             List[beam_fn_api_pb2.ProcessBundleSplitResponse]]
+SplitManager = Callable[
+    [int],
+    Generator[float,
+              Optional[beam_fn_api_pb2.ProcessBundleSplitResponse],
+              float]]
 
 # This module is experimental. No backwards-compatibility guarantees.
 
@@ -88,11 +95,12 @@ class FnApiRunner(runner.PipelineRunner):
   def __init__(
       self,
       default_environment=None,  # type: Optional[environments.Environment]
-      bundle_repeat=0,
-      use_state_iterables=False,
+      bundle_repeat=0,  # type: int
+      use_state_iterables=False,  # type: bool
       provision_info=None,  # type: Optional[ExtendedProvisionInfo]
-      progress_request_frequency=None,
-      is_drain=False):
+      progress_request_frequency=None,  # type: Optional[float]
+      is_drain=False  # type: bool
+  ):
     # type: (...) -> None
 
     """Creates a new Fn API Runner.
@@ -123,6 +131,7 @@ class FnApiRunner(runner.PipelineRunner):
 
   @staticmethod
   def supported_requirements():
+    # type: () -> Tuple[str, ...]
     return (
         common_urns.requirements.REQUIRES_STATEFUL_PROCESSING.urn,
         common_urns.requirements.REQUIRES_BUNDLE_FINALIZATION.urn,
@@ -231,6 +240,8 @@ class FnApiRunner(runner.PipelineRunner):
       yield
 
   def _validate_requirements(self, pipeline_proto):
+    # type: (beam_runner_api_pb2.Pipeline) -> None
+
     """As a test runner, validate requirements were set correctly."""
     expected_requirements = set()
 
@@ -266,6 +277,8 @@ class FnApiRunner(runner.PipelineRunner):
           (expected_requirements - set(pipeline_proto.requirements)))
 
   def _check_requirements(self, pipeline_proto):
+    # type: (beam_runner_api_pb2.Pipeline) -> None
+
     """Check that this runner can satisfy all pipeline requirements."""
     supported_requirements = set(self.supported_requirements())
     for requirement in pipeline_proto.requirements:
@@ -326,7 +339,8 @@ class FnApiRunner(runner.PipelineRunner):
     """
     worker_handler_manager = WorkerHandlerManager(
         stage_context.components.environments, self._provision_info)
-    monitoring_infos_by_stage = {}
+    monitoring_infos_by_stage = {
+    }  # type: Dict[str, Iterable[metrics_pb2.MonitoringInfo]]
 
     runner_execution_context = execution.FnApiRunnerExecutionContext(
         stages,
@@ -607,6 +621,7 @@ class FnApiRunner(runner.PipelineRunner):
          :return A generator which returns a cache token on next(generator)
      """
     def generate_token(identifier):
+      # type: (int) -> beam_fn_api_pb2.ProcessBundleRequest.CacheToken
       return beam_fn_api_pb2.ProcessBundleRequest.CacheToken(
           user_state=beam_fn_api_pb2.ProcessBundleRequest.CacheToken.UserState(
           ),
@@ -614,6 +629,7 @@ class FnApiRunner(runner.PipelineRunner):
 
     class StaticGenerator(object):
       def __init__(self):
+        # type: () -> None
         self._token = generate_token(1)
 
       def __iter__(self):
@@ -625,6 +641,7 @@ class FnApiRunner(runner.PipelineRunner):
 
     class DynamicGenerator(object):
       def __init__(self):
+        # type: () -> None
         self._counter = 0
         self._lock = threading.Lock()
 
@@ -643,7 +660,7 @@ class FnApiRunner(runner.PipelineRunner):
 class ExtendedProvisionInfo(object):
   def __init__(self,
                provision_info=None,  # type: Optional[beam_provision_api_pb2.ProvisionInfo]
-               artifact_staging_dir=None,
+               artifact_staging_dir=None,  # type: Optional[str]
                job_name=None,  # type: Optional[str]
               ):
     self.provision_info = (
@@ -661,7 +678,7 @@ class ExtendedProvisionInfo(object):
       return self
 
 
-_split_managers = []
+_split_managers = []  # type: List[Tuple[str, SplitManager]]
 
 
 @contextlib.contextmanager
@@ -699,7 +716,7 @@ class BundleManager(object):
 
   def __init__(self,
                bundle_context_manager,  # type: execution.BundleContextManager
-               progress_frequency=None,
+               progress_frequency=None,  # type: Optional[float]
                cache_token_generator=FnApiRunner.get_cache_token_generator()
               ):
     """Set up a bundle manager.
@@ -715,7 +732,7 @@ class BundleManager(object):
   def _send_input_to_worker(self,
                             process_bundle_id,  # type: str
                             read_transform_id,  # type: str
-                            byte_streams
+                            byte_streams  # type: Iterable[bytes]
                            ):
     # type: (...) -> None
     assert self._worker_handler is not None
@@ -735,6 +752,8 @@ class BundleManager(object):
     timer_out.close()
 
   def _select_split_manager(self):
+    # type: () -> Optional[SplitManager]
+
     """TODO(pabloem) WHAT DOES THIS DO"""
     unique_names = set(
         t.unique_name for t in self.bundle_context_manager.
@@ -742,7 +761,7 @@ class BundleManager(object):
     for stage_name, candidate in reversed(_split_managers):
       if (stage_name in unique_names or
           (stage_name + '/Process') in unique_names):
-        split_manager = candidate
+        split_manager = candidate  # type: Optional[SplitManager]
         break
     else:
       split_manager = None
@@ -750,9 +769,10 @@ class BundleManager(object):
     return split_manager
 
   def _generate_splits_for_testing(self,
-                                   split_manager,
+                                   split_manager,  # type: SplitManager
                                    inputs,  # type: Mapping[str, PartitionableBuffer]
-                                   process_bundle_id):
+                                   process_bundle_id  # type: str
+                                  ):
     # type: (...) -> List[beam_fn_api_pb2.ProcessBundleSplitResponse]
     split_results = []  # type: List[beam_fn_api_pb2.ProcessBundleSplitResponse]
     read_transform_id, buffer_data = only_element(inputs.items())
@@ -904,7 +924,7 @@ class ParallelBundleManager(BundleManager):
   def __init__(
       self,
       bundle_context_manager,  # type: execution.BundleContextManager
-      progress_frequency=None,
+      progress_frequency=None,  # type: Optional[float]
       cache_token_generator=None,
       **kwargs):
     # type: (...) -> None
@@ -977,8 +997,8 @@ class ProgressRequester(threading.Thread):
 
   def __init__(self,
                worker_handler,  # type: WorkerHandler
-               instruction_id,
-               frequency,
+               instruction_id,  # type: str
+               frequency,  # type: Optional[float]
                callback=None
               ):
     # type: (...) -> None
@@ -1000,6 +1020,7 @@ class ProgressRequester(threading.Thread):
       self.stop()
 
   def run(self):
+    # type: () -> None
     while not self._done:
       try:
         progress_result = self._worker_handler.control_conn.push(
@@ -1015,6 +1036,7 @@ class ProgressRequester(threading.Thread):
       time.sleep(self._frequency)
 
   def stop(self):
+    # type: () -> None
     self._done = True
 
 
@@ -1066,16 +1088,21 @@ class FnApiMetrics(metric.MetricResults):
 
 
 class RunnerResult(runner.PipelineResult):
-  def __init__(self, state, monitoring_infos_by_stage):
+  def __init__(self,
+               state,  # type: str
+               monitoring_infos_by_stage,  # type: Dict[str, Iterable[metrics_pb2.MonitoringInfo]]
+              ):
     super(RunnerResult, self).__init__(state)
     self._monitoring_infos_by_stage = monitoring_infos_by_stage
-    self._metrics = None
-    self._monitoring_metrics = None
+    self._metrics = None  # type: Optional[FnApiMetrics]
+    self._monitoring_metrics = None  # type: Optional[FnApiMetrics]
 
   def wait_until_finish(self, duration=None):
     return self._state
 
   def metrics(self):
+    # type: () -> FnApiMetrics
+
     """Returns a queryable object including user metrics only."""
     if self._metrics is None:
       self._metrics = FnApiMetrics(
@@ -1083,6 +1110,8 @@ class RunnerResult(runner.PipelineResult):
     return self._metrics
 
   def monitoring_metrics(self):
+    # type: () -> FnApiMetrics
+
     """Returns a queryable object including all metrics."""
     if self._monitoring_metrics is None:
       self._monitoring_metrics = FnApiMetrics(
